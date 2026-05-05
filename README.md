@@ -1,19 +1,20 @@
 # macrofactor-scraper
 
-Unofficial local read-only FastAPI backend for MacroFactor account data.
+Local-first FastAPI backend for ingesting Apple Health data exported by Health Auto Export.
 
-This project is intentionally scoped as a personal/local tool. MacroFactor's current Terms of Service restrict automated scraping/data extraction and commercial or business use without authorization. Do not deploy this as a public hosted service unless you have permission from MacroFactor.
+This project previously explored direct MacroFactor Firebase reads. The default runtime path now avoids MacroFactor private APIs and stores data posted by Health Auto Export into local SQLite. That means the API can only expose data available in Apple Health, not MacroFactor-only details such as food item names, recipes, coaching state, expenditure internals, or app targets.
 
 ## Status
 
-This is an initial backend scaffold. It implements:
+Implemented:
 
-- Firebase email/password authentication with in-memory token refresh.
-- Firestore REST decoding for common Firestore data types.
-- Read-only FastAPI endpoints for profile, food log, nutrition, weight log, workouts, gym profiles, and raw dataset inspection.
-- Configurable Firestore path templates so the project can be adjusted once real MacroFactor account responses are inspected.
+- `POST /v1/ingest/health-auto-export` with `X-API-Key` authentication.
+- Generic Health Auto Export JSON metric ingestion for objects shaped like `name`, `units`, and `data`.
+- SQLite storage for raw ingest batches, normalized health metric rows, and workout rows.
+- Metric listing, per-metric date filtering, daily summaries, workouts, and health check routes.
+- Nutrition-friendly daily summaries for common metric names such as `dietary_energy`, `protein`, `carbohydrates`, `total_fat`, `dietary_water`, `body_mass`, `step_count`, and `active_energy`.
 
-It does not implement any write operations.
+Legacy Firebase modules remain importable under the original module names for reference and tests, but they are not used by the FastAPI app.
 
 ## Setup
 
@@ -29,18 +30,16 @@ Copy-Item .env.example .env
 Edit `.env`:
 
 ```dotenv
-MACROFACTOR_USERNAME=you@example.com
-MACROFACTOR_PASSWORD=your-password
-MACROFACTOR_FIREBASE_API_KEY=your-firebase-web-api-key
-MACROFACTOR_FIREBASE_PROJECT_ID=sbs-diet-app
+HEALTH_EXPORT_API_KEY=change-me-local-secret
+HEALTH_EXPORT_SQLITE_PATH=health_export.sqlite3
 ```
 
-The Firebase API key is required for Firebase's Identity Toolkit sign-in endpoint. Firebase API keys are not account passwords, but they are still project configuration and should not be guessed into the codebase.
+`HEALTH_EXPORT_API_KEY` is the shared secret Health Auto Export sends in the `X-API-Key` header.
 
 ## Run
 
 ```powershell
-uvicorn macrofactor_scraper.api:app --reload
+uvicorn macrofactor_scraper.api:app --host 127.0.0.1 --port 8000 --reload
 ```
 
 Open:
@@ -51,20 +50,35 @@ Open:
 ## Endpoints
 
 - `GET /health`
-- `GET /v1/profile`
-- `GET /v1/food-log?date=YYYY-MM-DD`
-- `GET /v1/nutrition?date=YYYY-MM-DD`
-- `GET /v1/weight-log?start=YYYY-MM-DD&end=YYYY-MM-DD`
+- `POST /v1/ingest/health-auto-export`
+- `GET /v1/metrics`
+- `GET /v1/metrics/{metric_name}?start=YYYY-MM-DD&end=YYYY-MM-DD`
+- `GET /v1/daily-summary?start=YYYY-MM-DD&end=YYYY-MM-DD`
 - `GET /v1/workouts?start=YYYY-MM-DD&end=YYYY-MM-DD`
-- `GET /v1/workouts/{id}`
-- `GET /v1/gyms`
-- `GET /v1/raw/{dataset}`
 
-## Dataset Paths
+## Health Auto Export
 
-Default Firestore path templates are in `src/macrofactor_scraper/config.py`.
+Configure Health Auto Export:
 
-They are deliberately centralized because MacroFactor does not publish this schema as an official API. If a live request returns 404s, inspect the real Firestore paths and update `dataset_paths` rather than changing the route layer.
+- Automation type: REST API.
+- Format: JSON.
+- Export version: Version 2.
+- Data type: start with Health Metrics, then add Workouts as a second automation if needed.
+- URL: your local or tunneled `/v1/ingest/health-auto-export` endpoint.
+- Header: `X-API-Key: <HEALTH_EXPORT_API_KEY>`.
+- Date range: use "Since Last Sync" for ongoing sync and Manual Export for history.
+
+For iPhone testing, run the API locally on `127.0.0.1:8000` and expose it temporarily with a tunnel such as Cloudflare Tunnel or ngrok. iOS background exports can be delayed when the phone is locked, Background App Refresh is unavailable, or Low Power Mode is enabled.
+
+## Storage
+
+The SQLite database contains:
+
+- `ingest_batches`: received time, source headers with secrets redacted, payload hash, and raw payload JSON.
+- `health_records`: one normalized row per metric data point, with metric name, units, date/timestamp, quantity, source, raw row JSON, and a dedupe fingerprint.
+- `workout_records`: workout rows with start/end times, duration, energy, raw row JSON, and a dedupe fingerprint.
+
+Unknown metric row fields are preserved in `raw_json`, so special data such as blood pressure, heart rate details, and sleep segments can be inspected even when no first-class columns exist yet.
 
 ## Tests
 

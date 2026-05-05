@@ -56,6 +56,16 @@ class FirestoreClient:
         for item in await self.list_collection(path):
             yield item
 
+    async def list_collection_ids(self, parent_path: str | None = None) -> list[str]:
+        url = f"{self._document_url(parent_path)}:listCollectionIds" if parent_path else f"{self._base_url()}:listCollectionIds"
+        response = await self._request("POST", url, json={})
+        self._raise_for_upstream(response)
+        body = response.json()
+        collection_ids = body.get("collectionIds", [])
+        if not isinstance(collection_ids, list):
+            return []
+        return [str(collection_id) for collection_id in collection_ids]
+
     async def _request(self, method: str, url: str, **kwargs: object) -> httpx.Response:
         session = await self._auth.get_session()
         headers = {"Authorization": f"Bearer {session.id_token}"}
@@ -63,10 +73,13 @@ class FirestoreClient:
 
     def _document_url(self, path: str) -> str:
         encoded_path = "/".join(quote(part, safe="") for part in path.strip("/").split("/"))
+        return f"{self._base_url()}/{encoded_path}"
+
+    def _base_url(self) -> str:
         database = quote(self._settings.firestore_database, safe="")
         return (
             "https://firestore.googleapis.com/v1/projects/"
-            f"{self._settings.firebase_project_id}/databases/{database}/documents/{encoded_path}"
+            f"{self._settings.firebase_project_id}/databases/{database}/documents"
         )
 
     @staticmethod

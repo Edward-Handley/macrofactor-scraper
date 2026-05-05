@@ -1,13 +1,13 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 from string import Formatter
 from typing import Any
 
 from macrofactor_scraper.config import Settings
 from macrofactor_scraper.errors import ConfigurationError
 from macrofactor_scraper.firestore import FirestoreClient
-from macrofactor_scraper.models import DatasetCollection, DatasetRecord, ProfileResponse, RawDatasetResponse
+from macrofactor_scraper.models import CollectionIdsResponse, DatasetCollection, DatasetRecord, ProfileResponse, RawDatasetResponse
 
 
 class MacroFactorReadService:
@@ -27,6 +27,21 @@ class MacroFactorReadService:
             return None
         return _dataset_record(record, day)
 
+    async def year_field_document(self, dataset: str, day: date) -> DatasetRecord | None:
+        path = await self._format_path(dataset, year=str(day.year))
+        record = await self._firestore.get_document(path)
+        if record is None:
+            return None
+        raw = record.get(_mmdd(day))
+        if not isinstance(raw, dict):
+            return None
+        return DatasetRecord(
+            id=_mmdd(day),
+            path=f"{path}.{_mmdd(day)}",
+            date=day,
+            raw=raw,
+        )
+
     async def collection_between(self, dataset: str, start: date, end: date) -> DatasetCollection:
         if start > end:
             raise ValueError("start must be on or before end")
@@ -38,6 +53,21 @@ class MacroFactorReadService:
             if _record_date_in_range(record, start, end)
         ]
         return DatasetCollection(dataset=dataset, count=len(filtered), records=filtered)
+
+    async def year_field_collection_between(self, dataset: str, start: date, end: date) -> DatasetCollection:
+        if start > end:
+            raise ValueError("start must be on or before end")
+        records: list[DatasetRecord] = []
+        for year in range(start.year, end.year + 1):
+            path = await self._format_path(dataset, year=str(year))
+            document = await self._firestore.get_document(path)
+            if document is None:
+                continue
+            for day in _days_in_range(max(start, date(year, 1, 1)), min(end, date(year, 12, 31))):
+                raw = document.get(_mmdd(day))
+                if isinstance(raw, dict):
+                    records.append(DatasetRecord(id=_mmdd(day), path=f"{path}.{_mmdd(day)}", date=day, raw=raw))
+        return DatasetCollection(dataset=dataset, count=len(records), records=records)
 
     async def get_workout(self, workout_id: str) -> DatasetRecord | None:
         base_path = await self._format_path("workouts")
@@ -60,6 +90,12 @@ class MacroFactorReadService:
         else:
             data = await self._firestore.list_collection(path)
         return RawDatasetResponse(dataset=dataset, source_path=path, kind=kind, data=data)
+
+    async def collection_ids(self, parent_path: str | None = None) -> CollectionIdsResponse:
+        uid = await self._current_uid()
+        formatted_parent = parent_path.format(uid=uid) if parent_path else f"users/{uid}"
+        collection_ids = await self._firestore.list_collection_ids(formatted_parent)
+        return CollectionIdsResponse(parent_path=formatted_parent, collection_ids=collection_ids)
 
     async def _get_mapped_document(self, dataset: str, **values: str) -> dict[str, Any] | None:
         path = await self._format_path(dataset, **values)
@@ -138,3 +174,14 @@ def _coerce_record_date(record: dict[str, Any]) -> date | None:
 def _looks_like_document_path(path: str) -> bool:
     parts = [part for part in path.strip("/").split("/") if part]
     return len(parts) % 2 == 0
+
+
+def _mmdd(day: date) -> str:
+    return f"{day.month:02d}{day.day:02d}"
+
+
+def _days_in_range(start: date, end: date):
+    day = start
+    while day <= end:
+        yield day
+        day += timedelta(days=1)

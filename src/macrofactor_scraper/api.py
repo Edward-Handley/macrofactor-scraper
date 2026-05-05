@@ -4,41 +4,42 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import date
 
-from fastapi import Depends, FastAPI, HTTPException, Query
+from fastapi import Depends, FastAPI, Header, HTTPException, Request
 
-from macrofactor_scraper.auth import FirebaseAuthClient
 from macrofactor_scraper.config import Settings, get_settings
-from macrofactor_scraper.errors import AuthenticationError, ConfigurationError, UpstreamError
-from macrofactor_scraper.firestore import FirestoreClient
-from macrofactor_scraper.models import DatasetCollection, DatasetRecord, HealthResponse, ProfileResponse, RawDatasetResponse
-from macrofactor_scraper.service import MacroFactorReadService
+from macrofactor_scraper.health_export import HealthAutoExportService
+from macrofactor_scraper.models import (
+    DailySummaryResponse,
+    HealthResponse,
+    IngestResponse,
+    MetricListResponse,
+    MetricRecordsResponse,
+    WorkoutListResponse,
+)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     yield
-    firestore = getattr(app.state, "firestore", None)
-    if firestore is not None:
-        await firestore.close()
+    service = getattr(app.state, "health_export_service", None)
+    if service is not None:
+        service.close()
 
 
 app = FastAPI(
-    title="MacroFactor Scraper API",
-    version="0.1.0",
-    description="Unofficial local read-only API for MacroFactor account data.",
+    title="Health Auto Export Ingestion API",
+    version="0.2.0",
+    description="Local-first API for ingesting Apple Health data exported by Health Auto Export.",
     lifespan=lifespan,
 )
 
 
-def get_service(settings: Settings = Depends(get_settings)) -> MacroFactorReadService:
-    service = getattr(app.state, "service", None)
+def get_health_export_service(settings: Settings = Depends(get_settings)) -> HealthAutoExportService:
+    service = getattr(app.state, "health_export_service", None)
     if service is not None:
         return service
-    auth = FirebaseAuthClient(settings)
-    firestore = FirestoreClient(settings, auth)
-    app.state.firestore = firestore
-    service = MacroFactorReadService(settings, firestore)
-    app.state.service = service
+    service = HealthAutoExportService(settings.sqlite_path)
+    app.state.health_export_service = service
     return service
 
 
@@ -47,76 +48,64 @@ async def health() -> HealthResponse:
     return HealthResponse()
 
 
-@app.get("/v1/profile", response_model=ProfileResponse)
-async def profile(service: MacroFactorReadService = Depends(get_service)) -> ProfileResponse:
-    return await _call(service.profile)
-
-
-@app.get("/v1/food-log", response_model=DatasetRecord | None)
-async def food_log(
-    date_: date = Query(alias="date"),
-    service: MacroFactorReadService = Depends(get_service),
-) -> DatasetRecord | None:
-    return await _call(service.dated_document, "food_log", date_)
-
-
-@app.get("/v1/nutrition", response_model=DatasetRecord | None)
-async def nutrition(
-    date_: date = Query(alias="date"),
-    service: MacroFactorReadService = Depends(get_service),
-) -> DatasetRecord | None:
-    return await _call(service.dated_document, "nutrition", date_)
-
-
-@app.get("/v1/weight-log", response_model=DatasetCollection)
-async def weight_log(
-    start: date,
-    end: date,
-    service: MacroFactorReadService = Depends(get_service),
-) -> DatasetCollection:
-    return await _call(service.collection_between, "weight_log", start, end)
-
-
-@app.get("/v1/workouts", response_model=DatasetCollection)
-async def workouts(
-    start: date,
-    end: date,
-    service: MacroFactorReadService = Depends(get_service),
-) -> DatasetCollection:
-    return await _call(service.collection_between, "workouts", start, end)
-
-
-@app.get("/v1/workouts/{workout_id}", response_model=DatasetRecord | None)
-async def workout(
-    workout_id: str,
-    service: MacroFactorReadService = Depends(get_service),
-) -> DatasetRecord | None:
-    return await _call(service.get_workout, workout_id)
-
-
-@app.get("/v1/gyms", response_model=DatasetCollection)
-async def gyms(service: MacroFactorReadService = Depends(get_service)) -> DatasetCollection:
-    return await _call(service.collection, "gyms")
-
-
-@app.get("/v1/raw/{dataset}", response_model=RawDatasetResponse)
-async def raw_dataset(
-    dataset: str,
-    date_: date | None = Query(default=None, alias="date"),
-    service: MacroFactorReadService = Depends(get_service),
-) -> RawDatasetResponse:
-    values = {"date": date_.isoformat()} if date_ else {}
-    return await _call(service.raw_dataset, dataset, **values)
-
-
-async def _call(function, *args, **kwargs):
+@app.post("/v1/ingest/health-auto-export", response_model=IngestResponse)
+async def ingest_health_auto_export(
+    request: Request,
+    x_api_key: str | None = Header(default=None),
+    settings: Settings = Depends(get_settings),
+    service: HealthAutoExportService = Depends(get_health_export_service),
+) -> IngestResponse:
+    if not settings.ingest_api_key:
+        raise HTTPException(status_code=500, detail="Ingestion API key is not configured")
+    if x_api_key != settings.ingest_api_key:
+        raise HTTPException(status_code=401, detail="Invalid ingestion API key")
     try:
-        return await function(*args, **kwargs)
+        payload = await request.json()
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Malformed JSON payload") from exc
+    try:
+        return service.ingest(payload, dict(request.headers))
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-    except ConfigurationError as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
-    except AuthenticationError as exc:
-        raise HTTPException(status_code=401, detail=str(exc)) from exc
-    except UpstreamError as exc:
-        raise HTTPException(status_code=exc.status_code or 502, detail=str(exc)) from exc
+
+
+@app.get("/v1/metrics", response_model=MetricListResponse)
+async def metrics(service: HealthAutoExportService = Depends(get_health_export_service)) -> MetricListResponse:
+    return service.list_metrics()
+
+
+@app.get("/v1/metrics/{metric_name}", response_model=MetricRecordsResponse)
+async def metric_records(
+    metric_name: str,
+    start: date | None = None,
+    end: date | None = None,
+    service: HealthAutoExportService = Depends(get_health_export_service),
+) -> MetricRecordsResponse:
+    try:
+        return service.metric_records(metric_name, start, end)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.get("/v1/daily-summary", response_model=DailySummaryResponse)
+async def daily_summary(
+    start: date | None = None,
+    end: date | None = None,
+    service: HealthAutoExportService = Depends(get_health_export_service),
+) -> DailySummaryResponse:
+    try:
+        return service.daily_summary(start, end)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.get("/v1/workouts", response_model=WorkoutListResponse)
+async def workouts(
+    start: date | None = None,
+    end: date | None = None,
+    service: HealthAutoExportService = Depends(get_health_export_service),
+) -> WorkoutListResponse:
+    try:
+        return service.workouts(start, end)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc

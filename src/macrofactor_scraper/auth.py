@@ -39,8 +39,7 @@ class FirebaseAuthClient:
     async def sign_in(self) -> FirebaseSession:
         if not self._settings.has_credentials:
             raise ConfigurationError(
-                "Set MACROFACTOR_USERNAME, MACROFACTOR_PASSWORD, and "
-                "MACROFACTOR_FIREBASE_API_KEY in the environment."
+                "Set MACROFACTOR_USERNAME, MACROFACTOR_PASSWORD, and FIREBASE_WEB_API_KEY in the environment."
             )
 
         payload = {
@@ -53,7 +52,7 @@ class FirebaseAuthClient:
 
     async def refresh(self, refresh_token: str) -> FirebaseSession:
         payload = {"grant_type": "refresh_token", "refresh_token": refresh_token}
-        data = await self._post_identity("token", payload, secure_token=True)
+        data = await self._post_identity("token", payload, secure_token=True, form_encoded=True)
         return FirebaseSession(
             id_token=data["id_token"],
             refresh_token=data["refresh_token"],
@@ -67,13 +66,20 @@ class FirebaseAuthClient:
         payload: dict[str, object],
         *,
         secure_token: bool = False,
+        form_encoded: bool = False,
     ) -> dict[str, object]:
         base_url = "https://securetoken.googleapis.com/v1" if secure_token else IDENTITY_TOOLKIT_BASE_URL
         url = f"{base_url}/{endpoint}?key={self._settings.firebase_api_key}"
         client = self._http or httpx.AsyncClient(timeout=self._settings.api_timeout_seconds)
         close_client = self._http is None
+        headers = {"X-Ios-Bundle-Identifier": "com.sbs.diet"}
+        request_kwargs: dict[str, object]
+        if form_encoded:
+            request_kwargs = {"data": payload, "headers": headers}
+        else:
+            request_kwargs = {"json": payload, "headers": {"Content-Type": "application/json", **headers}}
         try:
-            response = await client.post(url, json=payload)
+            response = await client.post(url, **request_kwargs)
         except httpx.HTTPError as exc:
             raise AuthenticationError(f"Firebase authentication request failed: {exc}") from exc
         finally:

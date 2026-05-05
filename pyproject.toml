@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "macrofactor-scraper"
 version = "0.1.0"
-description = "Local read-only FastAPI backend for MacroFactor data"
+description = "Local FastAPI backend for Apple Health data exported by Health Auto Export"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
