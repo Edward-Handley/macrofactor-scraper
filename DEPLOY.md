@@ -101,12 +101,15 @@ docker compose ps
 docker compose logs -f caddy
 ```
 
+The Docker image builds the Vite React dashboard in a Node stage, then copies the compiled assets into the Python runtime image. No browser CDN dependency is required.
+
 Test:
 
 ```bash
 curl https://health.example.com/health
 curl -i https://health.example.com/v1/metrics
 curl -H "X-API-Key: paste-the-generated-secret" https://health.example.com/v1/metrics
+curl -H "X-API-Key: paste-the-generated-secret" https://health.example.com/v1/dashboard/preferences
 ```
 
 Expected:
@@ -137,6 +140,7 @@ Start with Health Metrics, then add a second automation for Workouts if desired.
 curl -H "X-API-Key: paste-the-generated-secret" https://health.example.com/v1/metrics
 curl -H "X-API-Key: paste-the-generated-secret" "https://health.example.com/v1/daily-summary?start=2026-05-01&end=2026-05-05"
 curl -H "X-API-Key: paste-the-generated-secret" https://health.example.com/v1/ingest/status
+curl -H "X-API-Key: paste-the-generated-secret" https://health.example.com/v1/dashboard/metric-catalog
 ```
 
 Open `https://health.example.com/` in a browser and sign in with `DASHBOARD_PASSWORD`.
@@ -198,4 +202,14 @@ For production, add a daily cron job that copies `data/health_export.sqlite3` to
 cd /opt/health-export
 git pull
 docker compose up -d --build
+```
+
+For a local asset check before deployment:
+
+```bash
+cd frontend
+npm install
+npm run build
+cd ..
+python -m pytest
 ```

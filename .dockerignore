@@ -12,3 +12,4 @@ build/
 *.egg-info/
 data/
 health_export.sqlite3
+frontend/node_modules/

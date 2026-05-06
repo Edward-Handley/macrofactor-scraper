@@ -95,12 +95,42 @@ class DailySummaryResponse(BaseModel):
     summaries: list[DailySummary]
 
 
+SUMMARY_FIELDS = ("calories", "protein", "carbohydrates", "fat", "water", "weight", "steps", "active_energy")
+
+
+class DashboardPreferences(BaseModel):
+    visible_summary_cards: list[str] = Field(default_factory=lambda: list(SUMMARY_FIELDS))
+    hidden_summary_fields: list[str] = Field(default_factory=list)
+    preferred_range_days: int = 30
+    trusted_metric_names: list[str] = Field(default_factory=list)
+    untrusted_metric_names: list[str] = Field(default_factory=list)
+    default_chart_set: list[str] = Field(default_factory=lambda: ["calories", "protein", "carbohydrates", "fat", "active_energy"])
+    source_filters: dict[str, list[str]] = Field(default_factory=dict)
+
+
 class DashboardSummaryResponse(BaseModel):
     count: int
     first_date: dt.date | None = None
     last_date: dt.date | None = None
     latest_date: dt.date | None = None
     summaries: list[DailySummary]
+    hidden_fields: list[str] = Field(default_factory=list)
+
+
+class DashboardMetricCatalogItem(BaseModel):
+    name: str
+    units: str | None = None
+    count: int
+    first_date: dt.date | None = None
+    last_date: dt.date | None = None
+    sources: list[str] = Field(default_factory=list)
+    dashboard_field: str | None = None
+    is_trusted: bool = True
+
+
+class DashboardMetricCatalogResponse(BaseModel):
+    count: int
+    metrics: list[DashboardMetricCatalogItem]
 
 
 class IngestStatusResponse(BaseModel):

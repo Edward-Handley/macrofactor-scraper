@@ -4,261 +4,42 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Health Export Dashboard</title>
-    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
     <style>
-      :root {
-        font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-        background: #f5f7f9;
-        color: #17202a;
-      }
       body {
         margin: 0;
-      }
-      header {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 16px;
-        padding: 16px 24px;
-        border-bottom: 1px solid #d7dde3;
-        background: #ffffff;
-      }
-      h1 {
-        margin: 0;
-        font-size: 1.25rem;
-        line-height: 1.2;
+        display: grid;
+        min-height: 100vh;
+        place-items: center;
+        background: #f3f6f8;
+        color: #17202a;
+        font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
       }
       main {
-        width: min(1200px, calc(100vw - 32px));
-        margin: 24px auto;
-      }
-      .toolbar, .grid, .table-wrap {
-        margin-bottom: 18px;
-      }
-      .toolbar {
-        display: flex;
-        align-items: end;
-        gap: 12px;
-        flex-wrap: wrap;
-      }
-      label {
-        display: grid;
-        gap: 5px;
-        font-size: 0.82rem;
-        font-weight: 650;
-      }
-      input, select, button {
-        height: 38px;
-        border-radius: 6px;
-        border: 1px solid #aab4be;
+        width: min(560px, calc(100vw - 32px));
+        border: 1px solid #d7dde3;
+        border-radius: 8px;
         background: #ffffff;
-        padding: 0 10px;
-        font: inherit;
+        padding: 22px;
       }
-      button, a.button {
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        border-color: #0f766e;
-        background: #0f766e;
-        color: #ffffff;
-        text-decoration: none;
-        font-weight: 700;
-        cursor: pointer;
+      h1 {
+        margin: 0 0 8px;
+        font-size: 1.2rem;
       }
-      a.button {
-        height: 36px;
-        padding: 0 10px;
-        border-radius: 6px;
+      p {
+        margin: 0;
+        color: #5f6c78;
+        line-height: 1.5;
       }
-      .ghost {
-        background: #ffffff;
+      code {
         color: #0f766e;
-      }
-      .grid {
-        display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-        gap: 12px;
-      }
-      .card {
-        background: #ffffff;
-        border: 1px solid #d7dde3;
-        border-radius: 8px;
-        padding: 14px;
-      }
-      .label {
-        color: #5f6c78;
-        font-size: 0.78rem;
         font-weight: 700;
-        text-transform: uppercase;
-      }
-      .value {
-        margin-top: 8px;
-        font-size: 1.35rem;
-        font-weight: 750;
-      }
-      table {
-        width: 100%;
-        border-collapse: collapse;
-        background: #ffffff;
-        border: 1px solid #d7dde3;
-        border-radius: 8px;
-        overflow: hidden;
-      }
-      th, td {
-        padding: 10px;
-        border-bottom: 1px solid #e4e8ec;
-        text-align: left;
-        font-size: 0.9rem;
-        white-space: nowrap;
-      }
-      th {
-        color: #5f6c78;
-        font-size: 0.78rem;
-        text-transform: uppercase;
-      }
-      .table-wrap {
-        overflow-x: auto;
-      }
-      .status {
-        margin-bottom: 16px;
-        color: #5f6c78;
-      }
-      @media (max-width: 680px) {
-        header {
-          align-items: flex-start;
-          flex-direction: column;
-          padding: 14px 16px;
-        }
-        main {
-          width: calc(100vw - 24px);
-          margin-top: 16px;
-        }
       }
     </style>
   </head>
   <body>
-    <div id="root"></div>
-    <script>
-      const {createElement: h, useEffect, useMemo, useState} = React;
-
-      function isoDate(offsetDays) {
-        const date = new Date();
-        date.setDate(date.getDate() + offsetDays);
-        return date.toISOString().slice(0, 10);
-      }
-
-      function fmt(value, digits = 0) {
-        if (value === null || value === undefined || Number.isNaN(Number(value))) return "-";
-        return Number(value).toLocaleString(undefined, {maximumFractionDigits: digits});
-      }
-
-      function App() {
-        const [start, setStart] = useState(isoDate(-30));
-        const [end, setEnd] = useState(isoDate(0));
-        const [summary, setSummary] = useState(null);
-        const [metrics, setMetrics] = useState([]);
-        const [status, setStatus] = useState(null);
-        const [error, setError] = useState("");
-
-        async function load() {
-          setError("");
-          try {
-            const [summaryRes, metricsRes, statusRes] = await Promise.all([
-              fetch(`/v1/dashboard/summary?start=${start}&end=${end}`),
-              fetch("/v1/metrics"),
-              fetch("/v1/ingest/status"),
-            ]);
-            if ([summaryRes, metricsRes, statusRes].some((res) => res.status === 401)) {
-              location.href = "/login";
-              return;
-            }
-            if (!summaryRes.ok || !metricsRes.ok || !statusRes.ok) throw new Error("Request failed");
-            setSummary(await summaryRes.json());
-            setMetrics((await metricsRes.json()).metrics);
-            setStatus(await statusRes.json());
-          } catch (err) {
-            setError("Could not load dashboard data.");
-          }
-        }
-
-        useEffect(() => { load(); }, []);
-
-        const latest = useMemo(() => {
-          const rows = summary?.summaries || [];
-          return rows[rows.length - 1] || {};
-        }, [summary]);
-
-        return h(React.Fragment, null,
-          h("header", null,
-            h("h1", null, "Health Export"),
-            h("form", {method: "post", action: "/logout"}, h("button", {className: "ghost", type: "submit"}, "Sign out"))
-          ),
-          h("main", null,
-            h("div", {className: "toolbar"},
-              h("label", null, "Start", h("input", {type: "date", value: start, onChange: (e) => setStart(e.target.value)})),
-              h("label", null, "End", h("input", {type: "date", value: end, onChange: (e) => setEnd(e.target.value)})),
-              h("button", {type: "button", onClick: load}, "Refresh"),
-              h("a", {className: "button ghost", href: `/v1/export/daily-summary.csv?start=${start}&end=${end}`}, "Export CSV")
-            ),
-            error ? h("p", {className: "status"}, error) : null,
-            h("p", {className: "status"}, status ? `Latest ingest: ${status.latest_batch_at || "-"} | Records: ${fmt(status.metric_record_count)} metrics, ${fmt(status.workout_record_count)} workouts` : "Loading..."),
-            h("section", {className: "grid"},
-              h(Card, {label: "Calories", value: fmt(latest.calories), suffix: "kcal"}),
-              h(Card, {label: "Protein", value: fmt(latest.protein), suffix: "g"}),
-              h(Card, {label: "Carbs", value: fmt(latest.carbohydrates), suffix: "g"}),
-              h(Card, {label: "Fat", value: fmt(latest.fat), suffix: "g"}),
-              h(Card, {label: "Water", value: fmt(latest.water), suffix: "mL"}),
-              h(Card, {label: "Weight", value: fmt(latest.weight, 1), suffix: "kg"}),
-              h(Card, {label: "Steps", value: fmt(latest.steps), suffix: ""}),
-              h(Card, {label: "Active Energy", value: fmt(latest.active_energy), suffix: "kcal"})
-            ),
-            h("section", {className: "table-wrap"},
-              h("table", null,
-                h("thead", null, h("tr", null, ["Date", "Calories", "Protein", "Carbs", "Fat", "Water", "Weight", "Steps", "Active"].map((x) => h("th", {key: x}, x)))),
-                h("tbody", null, (summary?.summaries || []).slice().reverse().map((row) =>
-                  h("tr", {key: row.date}, [
-                    h("td", {key: "date"}, row.date),
-                    h("td", {key: "cal"}, fmt(row.calories)),
-                    h("td", {key: "pro"}, fmt(row.protein)),
-                    h("td", {key: "carb"}, fmt(row.carbohydrates)),
-                    h("td", {key: "fat"}, fmt(row.fat)),
-                    h("td", {key: "water"}, fmt(row.water)),
-                    h("td", {key: "weight"}, fmt(row.weight, 1)),
-                    h("td", {key: "steps"}, fmt(row.steps)),
-                    h("td", {key: "active"}, fmt(row.active_energy)),
-                  ])
-                ))
-              )
-            ),
-            h("section", {className: "table-wrap"},
-              h("table", null,
-                h("thead", null, h("tr", null, ["Metric", "Units", "Count", "First", "Last", "Export"].map((x) => h("th", {key: x}, x)))),
-                h("tbody", null, metrics.map((metric) =>
-                  h("tr", {key: `${metric.name}:${metric.units}`}, [
-                    h("td", {key: "name"}, metric.name),
-                    h("td", {key: "units"}, metric.units || ""),
-                    h("td", {key: "count"}, fmt(metric.count)),
-                    h("td", {key: "first"}, metric.first_date || ""),
-                    h("td", {key: "last"}, metric.last_date || ""),
-                    h("td", {key: "export"}, h("a", {href: `/v1/export/metrics/${metric.name}.csv?start=${start}&end=${end}`}, "CSV")),
-                  ])
-                ))
-              )
-            )
-          )
-        );
-      }
-
-      function Card({label, value, suffix}) {
-        return h("article", {className: "card"},
-          h("div", {className: "label"}, label),
-          h("div", {className: "value"}, `${value}${suffix ? " " + suffix : ""}`)
-        );
-      }
-
-      ReactDOM.createRoot(document.getElementById("root")).render(h(App));
-    </script>
+    <main>
+      <h1>Dashboard assets are not built</h1>
+      <p>Run <code>npm install</code> and <code>npm run build</code> from <code>frontend/</code>, then reload this page.</p>
+    </main>
   </body>
 </html>

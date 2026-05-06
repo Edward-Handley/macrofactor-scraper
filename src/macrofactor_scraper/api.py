@@ -14,11 +14,14 @@ from urllib.parse import parse_qs
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response
 from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.staticfiles import StaticFiles
 
 from macrofactor_scraper.config import Settings, get_settings
 from macrofactor_scraper.health_export import HealthAutoExportService
 from macrofactor_scraper.models import (
     DailySummaryResponse,
+    DashboardMetricCatalogResponse,
+    DashboardPreferences,
     DashboardSummaryResponse,
     HealthResponse,
     IngestStatusResponse,
@@ -32,6 +35,7 @@ from macrofactor_scraper.models import (
 SESSION_COOKIE_NAME = "health_export_session"
 SESSION_MAX_AGE_SECONDS = 7 * 24 * 60 * 60
 STATIC_DIR = Path(__file__).with_name("static")
+FRONTEND_DIR = STATIC_DIR / "dashboard"
 APP_SETTINGS = Settings()
 
 
@@ -52,6 +56,7 @@ app = FastAPI(
     redoc_url=None if APP_SETTINGS.environment == "production" else "/redoc",
     openapi_url=None if APP_SETTINGS.environment == "production" else "/openapi.json",
 )
+app.mount("/assets", StaticFiles(directory=FRONTEND_DIR / "assets", check_dir=False), name="dashboard-assets")
 
 
 def get_health_export_service(settings: Settings = Depends(get_settings)) -> HealthAutoExportService:
@@ -202,12 +207,31 @@ async def daily_summary(
 async def dashboard_summary(
     start: date | None = None,
     end: date | None = None,
+    include_hidden: bool = False,
     service: HealthAutoExportService = Depends(get_health_export_service),
 ) -> DashboardSummaryResponse:
     try:
-        return service.dashboard_summary(start, end)
+        return service.dashboard_summary(start, end, include_hidden=include_hidden)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.get("/v1/dashboard/preferences", response_model=DashboardPreferences, dependencies=[Depends(require_private_access)])
+async def dashboard_preferences(service: HealthAutoExportService = Depends(get_health_export_service)) -> DashboardPreferences:
+    return service.dashboard_preferences()
+
+
+@app.put("/v1/dashboard/preferences", response_model=DashboardPreferences, dependencies=[Depends(require_private_access)])
+async def update_dashboard_preferences(
+    preferences: DashboardPreferences,
+    service: HealthAutoExportService = Depends(get_health_export_service),
+) -> DashboardPreferences:
+    return service.update_dashboard_preferences(preferences)
+
+
+@app.get("/v1/dashboard/metric-catalog", response_model=DashboardMetricCatalogResponse, dependencies=[Depends(require_private_access)])
+async def dashboard_metric_catalog(service: HealthAutoExportService = Depends(get_health_export_service)) -> DashboardMetricCatalogResponse:
+    return service.dashboard_metric_catalog()
 
 
 @app.get("/v1/workouts", response_model=WorkoutListResponse, dependencies=[Depends(require_private_access)])
@@ -291,7 +315,8 @@ def _csv_response(body: str, filename: str) -> Response:
 
 
 def _read_static(filename: str, *, error: str | None = None) -> str:
-    body = (STATIC_DIR / filename).read_text(encoding="utf-8")
+    path = FRONTEND_DIR / "index.html" if filename == "dashboard.html" and (FRONTEND_DIR / "index.html").exists() else STATIC_DIR / filename
+    body = path.read_text(encoding="utf-8")
     if error is not None:
         body = body.replace("{{ error }}", error)
     return body.replace("{{ error }}", "")

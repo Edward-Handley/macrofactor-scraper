@@ -12,6 +12,9 @@ from typing import Any
 from macrofactor_scraper.models import (
     DailySummary,
     DailySummaryResponse,
+    DashboardMetricCatalogItem,
+    DashboardMetricCatalogResponse,
+    DashboardPreferences,
     DashboardSummaryResponse,
     IngestStatusResponse,
     IngestResponse,
@@ -22,6 +25,9 @@ from macrofactor_scraper.models import (
     WorkoutListResponse,
     WorkoutRecord,
 )
+
+
+SUMMARY_FIELDS = ("calories", "protein", "carbohydrates", "fat", "water", "weight", "steps", "active_energy")
 
 
 @dataclass(frozen=True)
@@ -109,8 +115,104 @@ class HealthAutoExportService:
     def daily_summary(self, start: date | None = None, end: date | None = None) -> DailySummaryResponse:
         self._ensure_schema()
         _validate_range(start, end)
+        items = self._daily_summary_items(start, end)
+        return DailySummaryResponse(count=len(items), summaries=items)
+
+    def dashboard_summary(
+        self,
+        start: date | None = None,
+        end: date | None = None,
+        *,
+        include_hidden: bool = False,
+    ) -> DashboardSummaryResponse:
+        self._ensure_schema()
+        _validate_range(start, end)
+        preferences = self.dashboard_preferences()
+        items = self._daily_summary_items(start, end, preferences=preferences, include_hidden=include_hidden)
+        dates = [item.date for item in items]
+        hidden_fields = [] if include_hidden else _effective_hidden_fields(preferences)
+        return DashboardSummaryResponse(
+            count=len(items),
+            first_date=min(dates) if dates else None,
+            last_date=max(dates) if dates else None,
+            latest_date=max(dates) if dates else None,
+            summaries=items,
+            hidden_fields=hidden_fields,
+        )
+
+    def dashboard_preferences(self) -> DashboardPreferences:
+        self._ensure_schema()
+        with self._connect() as conn:
+            row = conn.execute("SELECT preferences_json FROM dashboard_preferences WHERE id = 1").fetchone()
+        if row is None:
+            return DashboardPreferences()
+        try:
+            data = json.loads(row["preferences_json"])
+        except json.JSONDecodeError:
+            return DashboardPreferences()
+        return DashboardPreferences.model_validate(data)
+
+    def update_dashboard_preferences(self, preferences: DashboardPreferences) -> DashboardPreferences:
+        self._ensure_schema()
+        normalized = _normalize_preferences(preferences)
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO dashboard_preferences (id, preferences_json, updated_at)
+                VALUES (1, ?, CURRENT_TIMESTAMP)
+                ON CONFLICT(id) DO UPDATE SET
+                    preferences_json = excluded.preferences_json,
+                    updated_at = CURRENT_TIMESTAMP
+                """,
+                (_canonical_json(normalized.model_dump()),),
+            )
+        return normalized
+
+    def dashboard_metric_catalog(self) -> DashboardMetricCatalogResponse:
+        self._ensure_schema()
+        preferences = self.dashboard_preferences()
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT
+                    metric_name,
+                    units,
+                    COUNT(*) AS count,
+                    MIN(record_date) AS first_date,
+                    MAX(record_date) AS last_date,
+                    GROUP_CONCAT(DISTINCT source) AS sources
+                FROM health_records
+                GROUP BY metric_name, units
+                ORDER BY metric_name, units
+                """
+            ).fetchall()
+        untrusted = set(preferences.untrusted_metric_names)
+        trusted = set(preferences.trusted_metric_names)
+        metrics = [
+            DashboardMetricCatalogItem(
+                name=row["metric_name"],
+                units=row["units"],
+                count=row["count"],
+                first_date=_parse_date(row["first_date"]),
+                last_date=_parse_date(row["last_date"]),
+                sources=sorted(source for source in (row["sources"] or "").split(",") if source),
+                dashboard_field=_summary_key(row["metric_name"]),
+                is_trusted=row["metric_name"] not in untrusted if not trusted else row["metric_name"] in trusted,
+            )
+            for row in rows
+        ]
+        return DashboardMetricCatalogResponse(count=len(metrics), metrics=metrics)
+
+    def _daily_summary_items(
+        self,
+        start: date | None = None,
+        end: date | None = None,
+        *,
+        preferences: DashboardPreferences | None = None,
+        include_hidden: bool = True,
+    ) -> list[DailySummary]:
         query = """
-        SELECT metric_name, units, record_date, quantity
+        SELECT metric_name, units, record_date, quantity, source
         FROM health_records
         WHERE record_date IS NOT NULL AND quantity IS NOT NULL
         """
@@ -126,12 +228,24 @@ class HealthAutoExportService:
 
         summaries: dict[date, dict[str, float]] = {}
         latest_weight: dict[date, float] = {}
+        hidden_fields = set() if include_hidden else set(_effective_hidden_fields(preferences))
+        untrusted_metric_names = set(preferences.untrusted_metric_names) if preferences is not None else set()
+        trusted_metric_names = set(preferences.trusted_metric_names) if preferences is not None else set()
+        source_filters = preferences.source_filters if preferences is not None else {}
         for row in rows:
             day = _parse_date(row["record_date"])
             if day is None:
                 continue
+            metric_name = row["metric_name"]
+            if metric_name in untrusted_metric_names:
+                continue
+            if trusted_metric_names and metric_name not in trusted_metric_names:
+                continue
+            allowed_sources = source_filters.get(metric_name)
+            if allowed_sources and row["source"] not in allowed_sources:
+                continue
             key = _summary_key(row["metric_name"])
-            if key is None:
+            if key is None or key in hidden_fields:
                 continue
             quantity = _summary_quantity(key, row["units"], float(row["quantity"]))
             if quantity is None:
@@ -145,18 +259,7 @@ class HealthAutoExportService:
             summaries.setdefault(day, {})["weight"] = weight
 
         items = [DailySummary(date=day, **values) for day, values in sorted(summaries.items())]
-        return DailySummaryResponse(count=len(items), summaries=items)
-
-    def dashboard_summary(self, start: date | None = None, end: date | None = None) -> DashboardSummaryResponse:
-        response = self.daily_summary(start, end)
-        dates = [item.date for item in response.summaries]
-        return DashboardSummaryResponse(
-            count=response.count,
-            first_date=min(dates) if dates else None,
-            last_date=max(dates) if dates else None,
-            latest_date=max(dates) if dates else None,
-            summaries=response.summaries,
-        )
+        return items
 
     def workouts(self, start: date | None = None, end: date | None = None) -> WorkoutListResponse:
         self._ensure_schema()
@@ -239,6 +342,11 @@ class HealthAutoExportService:
                     energy REAL,
                     raw_json TEXT NOT NULL,
                     fingerprint TEXT NOT NULL UNIQUE
+                );
+                CREATE TABLE IF NOT EXISTS dashboard_preferences (
+                    id INTEGER PRIMARY KEY CHECK (id = 1),
+                    preferences_json TEXT NOT NULL,
+                    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
                 );
                 """
             )
@@ -451,6 +559,35 @@ def _summary_quantity(key: str, units: str | None, quantity: float) -> float | N
             return quantity * 29.5735295625
         return quantity
     return quantity
+
+
+def _normalize_preferences(preferences: DashboardPreferences) -> DashboardPreferences:
+    known_fields = set(SUMMARY_FIELDS)
+    visible = [field for field in preferences.visible_summary_cards if field in known_fields]
+    hidden = [field for field in preferences.hidden_summary_fields if field in known_fields]
+    chart_set = [field for field in preferences.default_chart_set if field in known_fields]
+    source_filters = {
+        str(metric): [str(source) for source in sources if str(source)]
+        for metric, sources in preferences.source_filters.items()
+        if str(metric) and sources
+    }
+    return DashboardPreferences(
+        visible_summary_cards=visible or list(SUMMARY_FIELDS),
+        hidden_summary_fields=hidden,
+        preferred_range_days=max(1, min(365, int(preferences.preferred_range_days))),
+        trusted_metric_names=sorted({name for name in preferences.trusted_metric_names if name}),
+        untrusted_metric_names=sorted({name for name in preferences.untrusted_metric_names if name}),
+        default_chart_set=chart_set or ["calories", "protein", "carbohydrates", "fat", "active_energy"],
+        source_filters=source_filters,
+    )
+
+
+def _effective_hidden_fields(preferences: DashboardPreferences | None) -> list[str]:
+    if preferences is None:
+        return []
+    visible = set(preferences.visible_summary_cards)
+    hidden = set(preferences.hidden_summary_fields)
+    return [field for field in SUMMARY_FIELDS if field in hidden or field not in visible]
 
 
 def _safe_headers(headers: dict[str, str]) -> dict[str, str]:

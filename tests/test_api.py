@@ -217,6 +217,78 @@ def test_ingest_status_dashboard_summary_and_exports_require_auth(tmp_path: Path
         _clear_overrides()
 
 
+def test_dashboard_preferences_are_private_and_persist(tmp_path: Path) -> None:
+    client = _client(tmp_path)
+    try:
+        assert client.get("/v1/dashboard/preferences").status_code == 401
+
+        defaults = client.get("/v1/dashboard/preferences", headers=_auth())
+        assert defaults.status_code == 200
+        assert defaults.json()["preferred_range_days"] == 30
+        assert "water" in defaults.json()["visible_summary_cards"]
+
+        updated = defaults.json()
+        updated["hidden_summary_fields"] = ["water", "steps", "weight"]
+        updated["visible_summary_cards"] = ["calories", "protein", "carbohydrates", "fat", "active_energy"]
+        updated["preferred_range_days"] = 14
+        response = client.put("/v1/dashboard/preferences", json=updated, headers=_auth())
+        assert response.status_code == 200
+        assert response.json()["hidden_summary_fields"] == ["water", "steps", "weight"]
+
+        persisted = client.get("/v1/dashboard/preferences", headers=_auth())
+        assert persisted.status_code == 200
+        assert persisted.json()["preferred_range_days"] == 14
+        assert persisted.json()["hidden_summary_fields"] == ["water", "steps", "weight"]
+    finally:
+        _clear_overrides()
+
+
+def test_dashboard_summary_respects_hidden_fields_and_include_hidden(tmp_path: Path) -> None:
+    client = _client(tmp_path)
+    try:
+        client.post("/v1/ingest/health-auto-export", json=_payload(), headers=_auth())
+        preferences = client.get("/v1/dashboard/preferences", headers=_auth()).json()
+        preferences["hidden_summary_fields"] = ["water", "steps"]
+        preferences["visible_summary_cards"] = ["calories", "protein", "carbohydrates", "fat", "weight", "active_energy"]
+        assert client.put("/v1/dashboard/preferences", json=preferences, headers=_auth()).status_code == 200
+
+        response = client.get("/v1/dashboard/summary?start=2026-05-01&end=2026-05-01", headers=_auth())
+        assert response.status_code == 200
+        summary = response.json()["summaries"][0]
+        assert response.json()["hidden_fields"] == ["water", "steps"]
+        assert summary["water"] is None
+        assert summary["steps"] is None
+        assert summary["calories"] == 2200
+
+        full = client.get("/v1/dashboard/summary?start=2026-05-01&end=2026-05-01&include_hidden=true", headers=_auth())
+        assert full.status_code == 200
+        full_summary = full.json()["summaries"][0]
+        assert round(full_summary["water"], 1) == 2070.1
+        assert full_summary["steps"] == 7500
+    finally:
+        _clear_overrides()
+
+
+def test_dashboard_metric_catalog_reports_sources_mapping_and_trust(tmp_path: Path) -> None:
+    client = _client(tmp_path)
+    try:
+        client.post("/v1/ingest/health-auto-export", json=_payload(), headers=_auth())
+        preferences = client.get("/v1/dashboard/preferences", headers=_auth()).json()
+        preferences["untrusted_metric_names"] = ["step_count"]
+        assert client.put("/v1/dashboard/preferences", json=preferences, headers=_auth()).status_code == 200
+
+        assert client.get("/v1/dashboard/metric-catalog").status_code == 401
+        response = client.get("/v1/dashboard/metric-catalog", headers=_auth())
+        assert response.status_code == 200
+        metrics = {item["name"]: item for item in response.json()["metrics"]}
+        assert metrics["dietary_energy"]["dashboard_field"] == "calories"
+        assert metrics["dietary_energy"]["sources"] == ["MacroFactor"]
+        assert metrics["step_count"]["dashboard_field"] == "steps"
+        assert metrics["step_count"]["is_trusted"] is False
+    finally:
+        _clear_overrides()
+
+
 def test_malformed_payload_returns_400(tmp_path: Path) -> None:
     client = _client(tmp_path)
     try:
