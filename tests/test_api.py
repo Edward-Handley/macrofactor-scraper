@@ -42,6 +42,7 @@ def _payload() -> dict:
                 {"name": "total_fat", "units": "g", "data": [{"qty": 70, "date": "2026-05-01"}]},
                 {"name": "dietary_water", "units": "fl oz", "data": [{"qty": 70, "date": "2026-05-01"}]},
                 {"name": "body_mass", "units": "kg", "data": [{"qty": 80.5, "date": "2026-05-01"}]},
+                {"name": "weight_body_mass", "units": "kg", "data": [{"qty": 81.2, "date": "2026-05-02", "source": "MacroFactor"}]},
                 {"name": "step_count", "units": "count", "data": [{"qty": 7500, "date": "2026-05-01"}]},
                 {"name": "active_energy", "units": "kJ", "data": [{"qty": 1882.8, "date": "2026-05-01"}]},
                 {
@@ -98,7 +99,7 @@ def test_ingest_parses_metrics_preserves_raw_and_deduplicates(tmp_path: Path) ->
     try:
         response = client.post("/v1/ingest/health-auto-export", json=_payload(), headers={"X-API-Key": "secret"})
         assert response.status_code == 200
-        assert response.json()["metrics_inserted"] == 10
+        assert response.json()["metrics_inserted"] == 11
         assert response.json()["workouts_inserted"] == 1
 
         duplicate = client.post("/v1/ingest/health-auto-export", json=_payload(), headers={"X-API-Key": "secret"})
@@ -200,11 +201,12 @@ def test_ingest_status_dashboard_summary_and_exports_require_auth(tmp_path: Path
         status = client.get("/v1/ingest/status", headers=_auth())
         assert status.status_code == 200
         assert status.json()["batch_count"] == 1
-        assert status.json()["metric_record_count"] == 10
+        assert status.json()["metric_record_count"] == 11
 
         dashboard = client.get("/v1/dashboard/summary?start=2026-05-01&end=2026-05-02", headers=_auth())
         assert dashboard.status_code == 200
         assert dashboard.json()["latest_date"] == "2026-05-02"
+        assert dashboard.json()["summaries"][1]["weight"] == 81.2
 
         csv_response = client.get("/v1/export/daily-summary.csv?start=2026-05-01&end=2026-05-01", headers=_auth())
         assert csv_response.status_code == 200
@@ -283,6 +285,7 @@ def test_dashboard_metric_catalog_reports_sources_mapping_and_trust(tmp_path: Pa
         metrics = {item["name"]: item for item in response.json()["metrics"]}
         assert metrics["dietary_energy"]["dashboard_field"] == "calories"
         assert metrics["dietary_energy"]["sources"] == ["MacroFactor"]
+        assert metrics["weight_body_mass"]["dashboard_field"] == "weight"
         assert metrics["step_count"]["dashboard_field"] == "steps"
         assert metrics["step_count"]["is_trusted"] is False
     finally:

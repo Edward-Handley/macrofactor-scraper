@@ -537,6 +537,7 @@ def _summary_key(metric_name: str) -> str | None:
         "water": "water",
         "body_mass": "weight",
         "body_weight": "weight",
+        "weight_body_mass": "weight",
         "weight": "weight",
         "step_count": "steps",
         "steps": "steps",
