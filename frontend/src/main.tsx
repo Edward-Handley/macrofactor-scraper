@@ -1,12 +1,45 @@
 import React, {useEffect, useMemo, useState} from "react";
 import {createRoot} from "react-dom/client";
 import {
+  Activity,
+  AlertTriangle,
+  BarChart3,
+  CalendarDays,
+  CheckCircle2,
+  ChevronDown,
+  CircleGauge,
+  Database,
+  Download,
+  Droplets,
+  Dumbbell,
+  Eye,
+  EyeOff,
+  Flame,
+  Gauge,
+  Home,
+  LineChart as LineChartIcon,
+  Loader2,
+  LogOut,
+  RefreshCw,
+  Search,
+  Settings as SettingsIcon,
+  ShieldCheck,
+  SlidersHorizontal,
+  Sparkles,
+  Table2,
+  TrendingDown,
+  TrendingUp,
+  Utensils,
+  Weight
+} from "lucide-react";
+import {
   Area,
   AreaChart,
   Bar,
   BarChart,
   CartesianGrid,
   Cell,
+  ComposedChart,
   Legend,
   Line,
   LineChart,
@@ -20,18 +53,9 @@ import {
 import "./styles.css";
 
 type SummaryField = "calories" | "protein" | "carbohydrates" | "fat" | "water" | "weight" | "steps" | "active_energy";
+type TabId = "overview" | "nutrition" | "trends" | "metrics" | "quality" | "settings";
 
-type DailySummary = {
-  date: string;
-  calories: number | null;
-  protein: number | null;
-  carbohydrates: number | null;
-  fat: number | null;
-  water: number | null;
-  weight: number | null;
-  steps: number | null;
-  active_energy: number | null;
-};
+type DailySummary = Record<SummaryField, number | null> & {date: string};
 
 type DashboardSummary = {
   count: number;
@@ -72,19 +96,30 @@ type IngestStatus = {
   last_date: string | null;
 };
 
-const fieldMeta: Record<SummaryField, {label: string; unit: string; color: string; digits?: number}> = {
-  calories: {label: "Calories", unit: "kcal", color: "#2563eb"},
-  protein: {label: "Protein", unit: "g", color: "#16a34a"},
-  carbohydrates: {label: "Carbs", unit: "g", color: "#d97706"},
-  fat: {label: "Fat", unit: "g", color: "#9333ea"},
-  water: {label: "Water", unit: "mL", color: "#0891b2"},
-  weight: {label: "Weight", unit: "kg", color: "#dc2626", digits: 1},
-  steps: {label: "Steps", unit: "", color: "#4f46e5"},
-  active_energy: {label: "Active Energy", unit: "kcal", color: "#0f766e"}
+const fieldMeta: Record<SummaryField, {label: string; short: string; unit: string; color: string; soft: string; icon: React.ElementType; digits?: number}> = {
+  calories: {label: "Calories", short: "Cal", unit: "kcal", color: "#2563eb", soft: "#dbeafe", icon: Flame},
+  protein: {label: "Protein", short: "Pro", unit: "g", color: "#16a34a", soft: "#dcfce7", icon: Utensils},
+  carbohydrates: {label: "Carbohydrates", short: "Carbs", unit: "g", color: "#d97706", soft: "#fef3c7", icon: Sparkles},
+  fat: {label: "Fat", short: "Fat", unit: "g", color: "#9333ea", soft: "#f3e8ff", icon: CircleGauge},
+  water: {label: "Water", short: "Water", unit: "mL", color: "#0891b2", soft: "#cffafe", icon: Droplets},
+  weight: {label: "Weight", short: "Weight", unit: "kg", color: "#dc2626", soft: "#fee2e2", icon: Weight, digits: 1},
+  steps: {label: "Steps", short: "Steps", unit: "", color: "#4f46e5", soft: "#e0e7ff", icon: Activity},
+  active_energy: {label: "Active Energy", short: "Active", unit: "kcal", color: "#0f766e", soft: "#ccfbf1", icon: Dumbbell}
 };
 
 const allFields = Object.keys(fieldMeta) as SummaryField[];
-const tabs = ["Overview", "Nutrition", "Trends", "Metrics", "Data Quality", "Settings"] as const;
+const rangeOptions = [7, 14, 30, 90];
+const macroFields: SummaryField[] = ["protein", "carbohydrates", "fat"];
+const nutritionFields: SummaryField[] = ["calories", "protein", "carbohydrates", "fat", "water"];
+
+const tabs: Array<{id: TabId; label: string; icon: React.ElementType}> = [
+  {id: "overview", label: "Overview", icon: Home},
+  {id: "nutrition", label: "Nutrition", icon: Utensils},
+  {id: "trends", label: "Trends", icon: LineChartIcon},
+  {id: "metrics", label: "Metrics", icon: Database},
+  {id: "quality", label: "Data Quality", icon: ShieldCheck},
+  {id: "settings", label: "Settings", icon: SettingsIcon}
+];
 
 function isoDate(offsetDays: number): string {
   const value = new Date();
@@ -95,6 +130,11 @@ function isoDate(offsetDays: number): string {
 function fmt(value: number | null | undefined, digits = 0): string {
   if (value === null || value === undefined || Number.isNaN(Number(value))) return "Missing";
   return Number(value).toLocaleString(undefined, {maximumFractionDigits: digits});
+}
+
+function compact(value: number | null | undefined, digits = 0): string {
+  if (value === null || value === undefined || Number.isNaN(Number(value))) return "--";
+  return Intl.NumberFormat(undefined, {notation: "compact", maximumFractionDigits: digits}).format(value);
 }
 
 async function api<T>(url: string, init?: RequestInit): Promise<T> {
@@ -111,7 +151,7 @@ async function api<T>(url: string, init?: RequestInit): Promise<T> {
 }
 
 function App() {
-  const [activeTab, setActiveTab] = useState<(typeof tabs)[number]>("Overview");
+  const [activeTab, setActiveTab] = useState<TabId>("overview");
   const [start, setStart] = useState(isoDate(-30));
   const [end, setEnd] = useState(isoDate(0));
   const [summary, setSummary] = useState<DashboardSummary | null>(null);
@@ -119,14 +159,30 @@ function App() {
   const [catalog, setCatalog] = useState<MetricCatalogItem[]>([]);
   const [status, setStatus] = useState<IngestStatus | null>(null);
   const [search, setSearch] = useState("");
+  const [catalogFilter, setCatalogFilter] = useState<"all" | "dashboard" | "untrusted" | "stale">("all");
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
-  const visibleFields = preferences?.visible_summary_cards.filter((field) => !preferences.hidden_summary_fields.includes(field)) || allFields;
+
+  const visibleFields = useMemo(
+    () => preferences?.visible_summary_cards.filter((field) => !preferences.hidden_summary_fields.includes(field)) || allFields,
+    [preferences]
+  );
+  const rows = summary?.summaries || [];
+  const latest = rows[rows.length - 1];
+  const currentRangeDays = daysBetween(start, end) + 1;
+  const dataHealth = useMemo(() => qualitySnapshot(rows, catalog, preferences), [rows, catalog, preferences]);
+  const filteredCatalog = useMemo(
+    () => filterCatalog(catalog, search, catalogFilter),
+    [catalog, search, catalogFilter]
+  );
 
   async function load(rangeDays?: number) {
     setError("");
+    setLoading(true);
     try {
       const prefs = await api<Preferences>("/v1/dashboard/preferences");
-      const nextStart = rangeDays ? isoDate(-rangeDays) : preferences ? start : isoDate(-prefs.preferred_range_days);
+      const nextStart = rangeDays ? isoDate(-rangeDays + 1) : preferences ? start : isoDate(-prefs.preferred_range_days + 1);
       if (rangeDays || !preferences) setStart(nextStart);
       const [nextSummary, nextCatalog, nextStatus] = await Promise.all([
         api<DashboardSummary>(`/v1/dashboard/summary?start=${nextStart}&end=${end}`),
@@ -139,119 +195,265 @@ function App() {
       setStatus(nextStatus);
     } catch {
       setError("Could not load dashboard data.");
+    } finally {
+      setLoading(false);
     }
   }
 
   async function savePreferences(next: Preferences) {
+    setSaving(true);
     setPreferences(next);
-    const saved = await api<Preferences>("/v1/dashboard/preferences", {method: "PUT", body: JSON.stringify(next)});
-    setPreferences(saved);
-    await load();
+    try {
+      const saved = await api<Preferences>("/v1/dashboard/preferences", {method: "PUT", body: JSON.stringify(next)});
+      setPreferences(saved);
+      await load();
+    } finally {
+      setSaving(false);
+    }
   }
 
   useEffect(() => {
     void load();
   }, []);
 
-  const rows = summary?.summaries || [];
-  const latest = rows[rows.length - 1];
-  const filteredCatalog = catalog.filter((metric) => `${metric.name} ${metric.units || ""} ${metric.sources.join(" ")}`.toLowerCase().includes(search.toLowerCase()));
-
   return (
-    <>
-      <header className="topbar">
-        <div>
-          <h1>Health Export</h1>
-          <p>{status ? `Latest ingest ${status.latest_batch_at || "never"} | ${fmt(status.metric_record_count)} metric rows` : "Loading data"}</p>
+    <div className="app-shell">
+      <aside className="sidebar">
+        <div className="brand">
+          <div className="brand-mark"><Gauge size={22} /></div>
+          <div>
+            <strong>Health Export</strong>
+            <span>Nutrition console</span>
+          </div>
         </div>
-        <div className="top-actions">
-          <label>
-            <span>Start</span>
-            <input type="date" value={start} onChange={(event) => setStart(event.target.value)} />
-          </label>
-          <label>
-            <span>End</span>
-            <input type="date" value={end} onChange={(event) => setEnd(event.target.value)} />
-          </label>
-          <button type="button" onClick={() => void load()}>Refresh</button>
-          <a className="button secondary" href={`/v1/export/daily-summary.csv?start=${start}&end=${end}`}>Export</a>
-          <form method="post" action="/logout"><button className="secondary" type="submit">Logout</button></form>
-        </div>
-      </header>
-
-      <main>
-        <nav className="tabs" aria-label="Dashboard sections">
-          {tabs.map((tab) => <button key={tab} className={tab === activeTab ? "active" : ""} type="button" onClick={() => setActiveTab(tab)}>{tab}</button>)}
+        <nav className="nav-list" aria-label="Dashboard sections">
+          {tabs.map((tab) => {
+            const Icon = tab.icon;
+            return (
+              <button key={tab.id} className={tab.id === activeTab ? "nav-item active" : "nav-item"} type="button" onClick={() => setActiveTab(tab.id)}>
+                <Icon size={18} />
+                <span>{tab.label}</span>
+              </button>
+            );
+          })}
         </nav>
-        {error ? <p className="notice">{error}</p> : null}
-        {activeTab === "Overview" && <Overview rows={rows} latest={latest} visibleFields={visibleFields} />}
-        {activeTab === "Nutrition" && <Nutrition rows={rows} visibleFields={visibleFields} />}
-        {activeTab === "Trends" && <Trends rows={rows} fields={preferences?.default_chart_set || visibleFields} />}
-        {activeTab === "Metrics" && <Metrics metrics={filteredCatalog} search={search} setSearch={setSearch} preferences={preferences} savePreferences={savePreferences} />}
-        {activeTab === "Data Quality" && <DataQuality rows={rows} metrics={catalog} preferences={preferences} />}
-        {activeTab === "Settings" && preferences ? <Settings preferences={preferences} savePreferences={savePreferences} loadRange={load} /> : null}
-      </main>
-    </>
+        <div className="sidebar-card">
+          <span className="eyebrow">Data coverage</span>
+          <strong>{summary?.first_date || "No data"} to {summary?.last_date || ""}</strong>
+          <div className="meter"><span style={{width: `${dataHealth.score}%`}} /></div>
+          <small>{dataHealth.score}% quality score</small>
+        </div>
+      </aside>
+
+      <div className="workspace">
+        <header className="topbar">
+          <div className="title-stack">
+            <span className="eyebrow">{activeTabLabel(activeTab)}</span>
+            <h1>{headline(activeTab)}</h1>
+            <p>{subhead(activeTab, currentRangeDays, rows.length)}</p>
+          </div>
+          <div className="top-actions">
+            <DateField label="Start" value={start} setValue={setStart} />
+            <DateField label="End" value={end} setValue={setEnd} />
+            <div className="segmented">
+              {rangeOptions.map((days) => (
+                <button key={days} className={currentRangeDays === days ? "active" : ""} type="button" onClick={() => void load(days)}>
+                  {days}d
+                </button>
+              ))}
+            </div>
+            <IconButton label="Refresh" onClick={() => void load()}><RefreshCw size={17} /></IconButton>
+            <a className="icon-button secondary" href={`/v1/export/daily-summary.csv?start=${start}&end=${end}`} title="Export daily summary">
+              <Download size={17} />
+            </a>
+            <form method="post" action="/logout">
+              <button className="icon-button secondary" type="submit" title="Logout"><LogOut size={17} /></button>
+            </form>
+          </div>
+        </header>
+
+        <main>
+          <StatusStrip status={status} dataHealth={dataHealth} saving={saving} />
+          {error ? <div className="notice"><AlertTriangle size={18} />{error}</div> : null}
+          {loading ? <LoadingState /> : null}
+          {!loading && activeTab === "overview" && <Overview rows={rows} latest={latest} visibleFields={visibleFields} preferences={preferences} savePreferences={savePreferences} dataHealth={dataHealth} />}
+          {!loading && activeTab === "nutrition" && <Nutrition rows={rows} visibleFields={visibleFields} />}
+          {!loading && activeTab === "trends" && <Trends rows={rows} preferences={preferences} savePreferences={savePreferences} />}
+          {!loading && activeTab === "metrics" && <Metrics metrics={filteredCatalog} catalog={catalog} search={search} setSearch={setSearch} filter={catalogFilter} setFilter={setCatalogFilter} preferences={preferences} savePreferences={savePreferences} />}
+          {!loading && activeTab === "quality" && <DataQuality rows={rows} metrics={catalog} preferences={preferences} savePreferences={savePreferences} snapshot={dataHealth} />}
+          {!loading && activeTab === "settings" && preferences ? <Settings preferences={preferences} savePreferences={savePreferences} loadRange={load} metrics={catalog} /> : null}
+        </main>
+      </div>
+    </div>
   );
 }
 
-function Overview({rows, latest, visibleFields}: {rows: DailySummary[]; latest?: DailySummary; visibleFields: SummaryField[]}) {
+function StatusStrip({status, dataHealth, saving}: {status: IngestStatus | null; dataHealth: ReturnType<typeof qualitySnapshot>; saving: boolean}) {
+  return (
+    <section className="status-strip">
+      <StatusPill icon={Database} label="Metric rows" value={compact(status?.metric_record_count)} />
+      <StatusPill icon={CalendarDays} label="Latest ingest" value={formatDateTime(status?.latest_batch_at)} />
+      <StatusPill icon={CheckCircle2} label="Quality" value={`${dataHealth.score}%`} tone={dataHealth.score >= 85 ? "good" : dataHealth.score >= 60 ? "warn" : "bad"} />
+      <StatusPill icon={ShieldCheck} label="Reliability" value={`${dataHealth.disabledFields.length} hidden / ${dataHealth.untrustedMetrics.length} untrusted`} />
+      {saving ? <StatusPill icon={Loader2} label="Saving" value="Preferences" tone="active" spin /> : null}
+    </section>
+  );
+}
+
+function Overview({rows, latest, visibleFields, preferences, savePreferences, dataHealth}: {rows: DailySummary[]; latest?: DailySummary; visibleFields: SummaryField[]; preferences: Preferences | null; savePreferences: (value: Preferences) => Promise<void>; dataHealth: ReturnType<typeof qualitySnapshot>}) {
+  const insights = buildInsights(rows, dataHealth);
   return (
     <>
-      <section className="card-grid">
-        {visibleFields.map((field) => <SummaryCard key={field} field={field} value={latest?.[field] ?? null} rows={rows} />)}
+      <section className="hero-grid">
+        <div className="hero-panel">
+          <div className="panel-head">
+            <div>
+              <span className="eyebrow">Today snapshot</span>
+              <h2>{latest?.date || "Waiting for data"}</h2>
+            </div>
+            <span className={dataHealth.score >= 85 ? "badge good" : dataHealth.score >= 60 ? "badge warn" : "badge bad"}>{dataHealth.score}% quality</span>
+          </div>
+          <div className="hero-kpis">
+            {visibleFields.slice(0, 4).map((field) => <SummaryCard key={field} field={field} value={latest?.[field] ?? null} rows={rows} preferences={preferences} savePreferences={savePreferences} />)}
+          </div>
+        </div>
+        <div className="panel insight-panel">
+          <div className="panel-head"><h2>Signals</h2><Sparkles size={18} /></div>
+          {insights.map((item) => (
+            <div className="insight" key={item.title}>
+              <item.icon size={18} />
+              <div><strong>{item.title}</strong><span>{item.detail}</span></div>
+            </div>
+          ))}
+        </div>
       </section>
-      <section className="panel">
-        <h2>Recent Daily Summary</h2>
-        <DailyTable rows={rows.slice(-14).reverse()} fields={visibleFields} />
+
+      <section className="card-grid">
+        {visibleFields.slice(4).map((field) => <SummaryCard key={field} field={field} value={latest?.[field] ?? null} rows={rows} preferences={preferences} savePreferences={savePreferences} />)}
+      </section>
+
+      <section className="dashboard-grid">
+        <div className="panel span-8">
+          <div className="panel-head"><h2>Nutrition Trend</h2><span className="muted">Calories, macros, and activity</span></div>
+          <MultiMetricChart rows={rows} fields={visibleFields.filter((field) => ["calories", "protein", "carbohydrates", "fat", "active_energy"].includes(field))} />
+        </div>
+        <div className="panel span-4">
+          <div className="panel-head"><h2>Current vs Previous</h2><BarChart3 size={18} /></div>
+          <ComparisonBars rows={rows} fields={visibleFields.slice(0, 5)} />
+        </div>
+        <div className="panel span-12">
+          <div className="panel-head"><h2>Recent Daily Summary</h2><span className="muted">{rows.length} days loaded</span></div>
+          <DailyTable rows={rows.slice(-14).reverse()} fields={visibleFields} dense />
+        </div>
       </section>
     </>
   );
 }
 
-function SummaryCard({field, value, rows}: {field: SummaryField; value: number | null; rows: DailySummary[]}) {
+function SummaryCard({field, value, rows, preferences, savePreferences}: {field: SummaryField; value: number | null; rows: DailySummary[]; preferences: Preferences | null; savePreferences: (value: Preferences) => Promise<void>}) {
   const meta = fieldMeta[field];
+  const Icon = meta.icon;
   const last7 = average(rows.slice(-7), field);
   const last30 = average(rows.slice(-30), field);
+  const trend = deltaPercent(rows, field);
+  function hideField() {
+    if (!preferences) return;
+    void savePreferences({
+      ...preferences,
+      visible_summary_cards: preferences.visible_summary_cards.filter((item) => item !== field),
+      hidden_summary_fields: Array.from(new Set([...preferences.hidden_summary_fields, field]))
+    });
+  }
   return (
-    <article className="summary-card">
+    <article className="summary-card" style={{"--accent": meta.color, "--accent-soft": meta.soft} as React.CSSProperties}>
+      <div className="summary-top">
+        <span className="metric-icon"><Icon size={18} /></span>
+        <button className="ghost-icon" type="button" title={`Hide ${meta.label}`} onClick={hideField}><EyeOff size={15} /></button>
+      </div>
       <div className="card-label">{meta.label}</div>
       <div className={value === null ? "card-value missing" : "card-value"}>{fmt(value, meta.digits)} {value !== null ? meta.unit : ""}</div>
-      <div className="card-sub">7d {fmt(last7, meta.digits)} | 30d {fmt(last30, meta.digits)}</div>
+      <div className="card-sub">
+        <span>7d {fmt(last7, meta.digits)}</span>
+        <span>30d {fmt(last30, meta.digits)}</span>
+      </div>
+      <div className={trend >= 0 ? "trend up" : "trend down"}>
+        {trend >= 0 ? <TrendingUp size={15} /> : <TrendingDown size={15} />}
+        {Math.abs(trend).toFixed(1)}% vs prior
+      </div>
     </article>
   );
 }
 
 function Nutrition({rows, visibleFields}: {rows: DailySummary[]; visibleFields: SummaryField[]}) {
-  const macroData = ["protein", "carbohydrates", "fat"].map((field) => ({name: fieldMeta[field as SummaryField].label, value: sum(rows.slice(-7), field as SummaryField)}));
+  const macroData = macroFields.map((field) => ({name: fieldMeta[field].label, value: sum(rows.slice(-7), field), color: fieldMeta[field].color}));
   return (
-    <div className="two-col">
-      <section className="panel wide">
-        <h2>Calories and Macros</h2>
-        <Chart rows={rows} fields={["calories", "protein", "carbohydrates", "fat"].filter((field) => visibleFields.includes(field as SummaryField)) as SummaryField[]} />
-      </section>
-      <section className="panel">
-        <h2>7 Day Macro Split</h2>
-        <ResponsiveContainer width="100%" height={260}>
+    <section className="dashboard-grid">
+      <div className="panel span-8">
+        <div className="panel-head"><h2>Calorie and Macro Timeline</h2><span className="muted">Daily totals over selected range</span></div>
+        <MultiMetricChart rows={rows} fields={nutritionFields.filter((field) => visibleFields.includes(field))} />
+      </div>
+      <div className="panel span-4">
+        <div className="panel-head"><h2>7 Day Macro Split</h2><Utensils size={18} /></div>
+        <ResponsiveContainer width="100%" height={290}>
           <PieChart>
-            <Pie data={macroData} dataKey="value" nameKey="name" outerRadius={92}>
-              {macroData.map((entry, index) => <Cell key={entry.name} fill={["#16a34a", "#d97706", "#9333ea"][index]} />)}
+            <Pie data={macroData} dataKey="value" nameKey="name" innerRadius={58} outerRadius={96} paddingAngle={4}>
+              {macroData.map((entry) => <Cell key={entry.name} fill={entry.color} />)}
             </Pie>
-            <Tooltip />
+            <Tooltip formatter={(value) => `${fmt(Number(value))} g`} />
             <Legend />
           </PieChart>
         </ResponsiveContainer>
-      </section>
-      <section className="panel wide"><h2>Daily Nutrition</h2><DailyTable rows={rows.slice().reverse()} fields={visibleFields} /></section>
-    </div>
+      </div>
+      <div className="panel span-5">
+        <div className="panel-head"><h2>Macro Consistency</h2><CircleGauge size={18} /></div>
+        <ConsistencyList rows={rows} fields={macroFields} />
+      </div>
+      <div className="panel span-7">
+        <div className="panel-head"><h2>Daily Nutrition Log</h2><Table2 size={18} /></div>
+        <DailyTable rows={rows.slice().reverse()} fields={nutritionFields.filter((field) => visibleFields.includes(field))} />
+      </div>
+    </section>
   );
 }
 
-function Trends({rows, fields}: {rows: DailySummary[]; fields: SummaryField[]}) {
-  return <section className="chart-grid">{fields.map((field) => <div className="panel" key={field}><h2>{fieldMeta[field].label}</h2><Chart rows={rows} fields={[field]} /></div>)}</section>;
+function Trends({rows, preferences, savePreferences}: {rows: DailySummary[]; preferences: Preferences | null; savePreferences: (value: Preferences) => Promise<void>}) {
+  const fields = preferences?.default_chart_set.length ? preferences.default_chart_set : allFields;
+  function toggleChart(field: SummaryField) {
+    if (!preferences) return;
+    const next = preferences.default_chart_set.includes(field)
+      ? preferences.default_chart_set.filter((item) => item !== field)
+      : [...preferences.default_chart_set, field];
+    void savePreferences({...preferences, default_chart_set: next});
+  }
+  return (
+    <>
+      <section className="control-panel">
+        <div>
+          <span className="eyebrow">Chart builder</span>
+          <h2>Choose the metrics that deserve attention</h2>
+        </div>
+        <div className="chip-row">
+          {allFields.map((field) => (
+            <button key={field} className={fields.includes(field) ? "chip active" : "chip"} type="button" onClick={() => toggleChart(field)}>
+              {fieldMeta[field].label}
+            </button>
+          ))}
+        </div>
+      </section>
+      <section className="chart-grid">
+        {fields.map((field) => (
+          <div className="panel chart-panel" key={field}>
+            <div className="panel-head"><h2>{fieldMeta[field].label}</h2><span className="muted">{fieldMeta[field].unit || "count"}</span></div>
+            <SingleMetricChart rows={rows} field={field} />
+          </div>
+        ))}
+      </section>
+    </>
+  );
 }
 
-function Metrics({metrics, search, setSearch, preferences, savePreferences}: {metrics: MetricCatalogItem[]; search: string; setSearch: (value: string) => void; preferences: Preferences | null; savePreferences: (value: Preferences) => Promise<void>}) {
+function Metrics({metrics, catalog, search, setSearch, filter, setFilter, preferences, savePreferences}: {metrics: MetricCatalogItem[]; catalog: MetricCatalogItem[]; search: string; setSearch: (value: string) => void; filter: "all" | "dashboard" | "untrusted" | "stale"; setFilter: (value: "all" | "dashboard" | "untrusted" | "stale") => void; preferences: Preferences | null; savePreferences: (value: Preferences) => Promise<void>}) {
+  const sourceOptions = Array.from(new Set(catalog.flatMap((metric) => metric.sources))).sort();
   function toggleTrust(metric: MetricCatalogItem) {
     if (!preferences) return;
     const untrusted = new Set(preferences.untrusted_metric_names);
@@ -259,32 +461,120 @@ function Metrics({metrics, search, setSearch, preferences, savePreferences}: {me
     else untrusted.add(metric.name);
     void savePreferences({...preferences, untrusted_metric_names: [...untrusted]});
   }
+  function toggleDashboardField(field: SummaryField) {
+    if (!preferences) return;
+    const visible = new Set(preferences.visible_summary_cards);
+    const hidden = new Set(preferences.hidden_summary_fields);
+    if (visible.has(field) && !hidden.has(field)) {
+      visible.delete(field);
+      hidden.add(field);
+    } else {
+      visible.add(field);
+      hidden.delete(field);
+    }
+    void savePreferences({...preferences, visible_summary_cards: [...visible], hidden_summary_fields: [...hidden]});
+  }
+  function toggleSource(metric: MetricCatalogItem, source: string) {
+    if (!preferences) return;
+    const existing = new Set(preferences.source_filters[metric.name] || []);
+    if (existing.has(source)) existing.delete(source);
+    else existing.add(source);
+    const source_filters = {...preferences.source_filters};
+    if (existing.size) source_filters[metric.name] = [...existing];
+    else delete source_filters[metric.name];
+    void savePreferences({...preferences, source_filters});
+  }
   return (
     <section className="panel">
-      <div className="panel-head"><h2>Metric Catalog</h2><input type="search" placeholder="Search metrics" value={search} onChange={(event) => setSearch(event.target.value)} /></div>
-      <div className="table-wrap"><table><thead><tr><th>Metric</th><th>Units</th><th>Rows</th><th>Coverage</th><th>Sources</th><th>Field</th><th>Actions</th></tr></thead><tbody>{metrics.map((metric) => (
-        <tr key={`${metric.name}:${metric.units || ""}`}>
-          <td>{metric.name}</td><td>{metric.units || ""}</td><td>{fmt(metric.count)}</td><td>{metric.first_date || ""} to {metric.last_date || ""}</td><td>{metric.sources.join(", ") || "Unknown"}</td><td>{metric.dashboard_field || ""}</td>
-          <td><button className="small" type="button" onClick={() => toggleTrust(metric)}>{preferences?.untrusted_metric_names.includes(metric.name) ? "Trust" : "Untrust"}</button> <a href={`/v1/export/metrics/${metric.name}.csv`}>CSV</a></td>
-        </tr>
-      ))}</tbody></table></div>
+      <div className="catalog-toolbar">
+        <div className="search-box"><Search size={17} /><input type="search" placeholder="Search metric, unit, or source" value={search} onChange={(event) => setSearch(event.target.value)} /></div>
+        <div className="segmented">
+          {(["all", "dashboard", "untrusted", "stale"] as const).map((item) => <button key={item} className={filter === item ? "active" : ""} type="button" onClick={() => setFilter(item)}>{item}</button>)}
+        </div>
+      </div>
+      <div className="source-strip">
+        <span className="muted">Sources</span>
+        {sourceOptions.slice(0, 8).map((source) => <span className="source-pill" key={source}>{source}</span>)}
+      </div>
+      <div className="table-wrap catalog-table">
+        <table>
+          <thead><tr><th>Metric</th><th>Status</th><th>Rows</th><th>Coverage</th><th>Sources</th><th>Dashboard</th><th>Actions</th></tr></thead>
+          <tbody>{metrics.map((metric) => {
+            const disabled = preferences?.untrusted_metric_names.includes(metric.name);
+            const visibleField = metric.dashboard_field ? preferences?.visible_summary_cards.includes(metric.dashboard_field) && !preferences?.hidden_summary_fields.includes(metric.dashboard_field) : false;
+            return (
+              <tr key={`${metric.name}:${metric.units || ""}`}>
+                <td><strong>{metric.name}</strong><small>{metric.units || "unitless"}</small></td>
+                <td><span className={disabled ? "badge bad" : "badge good"}>{disabled ? "Untrusted" : "Trusted"}</span></td>
+                <td>{fmt(metric.count)}</td>
+                <td>{metric.first_date || ""}<span className="muted"> to </span>{metric.last_date || ""}</td>
+                <td>
+                  <div className="source-list">
+                    {(metric.sources.length ? metric.sources : ["Unknown"]).map((source) => {
+                      const selected = preferences?.source_filters[metric.name]?.includes(source);
+                      return <button key={source} className={selected ? "source-pill active" : "source-pill"} type="button" onClick={() => toggleSource(metric, source)}>{source}</button>;
+                    })}
+                  </div>
+                </td>
+                <td>{metric.dashboard_field ? <button className={visibleField ? "small active" : "small"} type="button" onClick={() => toggleDashboardField(metric.dashboard_field!)}>{visibleField ? <Eye size={14} /> : <EyeOff size={14} />}{fieldMeta[metric.dashboard_field].short}</button> : <span className="muted">Raw only</span>}</td>
+                <td><button className="small" type="button" onClick={() => toggleTrust(metric)}>{disabled ? "Trust" : "Untrust"}</button><a className="small-link" href={`/v1/export/metrics/${metric.name}.csv`}>CSV</a></td>
+              </tr>
+            );
+          })}</tbody>
+        </table>
+      </div>
     </section>
   );
 }
 
-function DataQuality({rows, metrics, preferences}: {rows: DailySummary[]; metrics: MetricCatalogItem[]; preferences: Preferences | null}) {
+function DataQuality({rows, metrics, preferences, savePreferences, snapshot}: {rows: DailySummary[]; metrics: MetricCatalogItem[]; preferences: Preferences | null; savePreferences: (value: Preferences) => Promise<void>; snapshot: ReturnType<typeof qualitySnapshot>}) {
   const stale = metrics.filter((metric) => metric.last_date && metric.last_date < isoDate(-14));
-  const disabled = allFields.filter((field) => preferences?.hidden_summary_fields.includes(field) || !preferences?.visible_summary_cards.includes(field));
+  const suspicious = suspiciousValues(rows);
+  function hideField(field: SummaryField) {
+    if (!preferences) return;
+    void savePreferences({
+      ...preferences,
+      visible_summary_cards: preferences.visible_summary_cards.filter((item) => item !== field),
+      hidden_summary_fields: Array.from(new Set([...preferences.hidden_summary_fields, field]))
+    });
+  }
   return (
-    <div className="quality-grid">
-      <section className="panel"><h2>Missing Days</h2>{allFields.map((field) => <p key={field}><strong>{fieldMeta[field].label}</strong>: {rows.filter((row) => row[field] === null || row[field] === undefined).length} missing</p>)}</section>
-      <section className="panel"><h2>Reliability</h2><p>Disabled fields: {disabled.length ? disabled.map((field) => fieldMeta[field].label).join(", ") : "None"}</p><p>Untrusted metrics: {preferences?.untrusted_metric_names.join(", ") || "None"}</p></section>
-      <section className="panel"><h2>Stale Metrics</h2>{stale.length ? stale.slice(0, 8).map((metric) => <p key={metric.name}>{metric.name}: {metric.last_date}</p>) : <p>No stale metrics in the catalog.</p>}</section>
-    </div>
+    <section className="dashboard-grid">
+      <div className="panel span-4 score-panel">
+        <span className="eyebrow">Quality score</span>
+        <strong>{snapshot.score}%</strong>
+        <div className="meter large"><span style={{width: `${snapshot.score}%`}} /></div>
+        <p>{snapshot.missingTotal} missing field-days across {rows.length} loaded days.</p>
+      </div>
+      <div className="panel span-4">
+        <div className="panel-head"><h2>Missing Days</h2><AlertTriangle size={18} /></div>
+        {allFields.map((field) => (
+          <div className="quality-row" key={field}>
+            <span>{fieldMeta[field].label}</span>
+            <strong>{rows.filter((row) => row[field] === null || row[field] === undefined).length}</strong>
+            <button className="ghost-icon" type="button" title={`Hide ${fieldMeta[field].label}`} onClick={() => hideField(field)}><EyeOff size={15} /></button>
+          </div>
+        ))}
+      </div>
+      <div className="panel span-4">
+        <div className="panel-head"><h2>Reliability Controls</h2><SlidersHorizontal size={18} /></div>
+        <p className="quality-copy">Hidden fields: {snapshot.disabledFields.length ? snapshot.disabledFields.map((field) => fieldMeta[field].label).join(", ") : "None"}</p>
+        <p className="quality-copy">Untrusted metrics: {snapshot.untrustedMetrics.length ? snapshot.untrustedMetrics.join(", ") : "None"}</p>
+        <p className="quality-copy">Source filters: {preferences ? Object.keys(preferences.source_filters).length : 0}</p>
+      </div>
+      <div className="panel span-6">
+        <div className="panel-head"><h2>Stale Metrics</h2><ChevronDown size={18} /></div>
+        <List items={stale.slice(0, 10).map((metric) => `${metric.name}: last seen ${metric.last_date}`)} empty="No stale metrics in the selected catalog." />
+      </div>
+      <div className="panel span-6">
+        <div className="panel-head"><h2>Suspicious Values</h2><AlertTriangle size={18} /></div>
+        <List items={suspicious.slice(0, 10)} empty="No suspicious dashboard values found." />
+      </div>
+    </section>
   );
 }
 
-function Settings({preferences, savePreferences, loadRange}: {preferences: Preferences; savePreferences: (value: Preferences) => Promise<void>; loadRange: (rangeDays?: number) => Promise<void>}) {
+function Settings({preferences, savePreferences, loadRange, metrics}: {preferences: Preferences; savePreferences: (value: Preferences) => Promise<void>; loadRange: (rangeDays?: number) => Promise<void>; metrics: MetricCatalogItem[]}) {
   function setField(field: SummaryField, enabled: boolean) {
     const visible = new Set(preferences.visible_summary_cards);
     const hidden = new Set(preferences.hidden_summary_fields);
@@ -297,36 +587,204 @@ function Settings({preferences, savePreferences, loadRange}: {preferences: Prefe
     }
     void savePreferences({...preferences, visible_summary_cards: [...visible], hidden_summary_fields: [...hidden]});
   }
+  function setChart(field: SummaryField, enabled: boolean) {
+    const set = new Set(preferences.default_chart_set);
+    if (enabled) set.add(field);
+    else set.delete(field);
+    void savePreferences({...preferences, default_chart_set: [...set]});
+  }
   function setRange(days: number) {
     void savePreferences({...preferences, preferred_range_days: days}).then(() => loadRange(days));
   }
   return (
-    <section className="panel settings">
-      <h2>Settings</h2>
-      <div className="setting-group">{allFields.map((field) => <label className="check" key={field}><input type="checkbox" checked={preferences.visible_summary_cards.includes(field) && !preferences.hidden_summary_fields.includes(field)} onChange={(event) => setField(field, event.target.checked)} />{fieldMeta[field].label}</label>)}</div>
-      <div className="setting-group"><span>Default range</span>{[7, 14, 30, 90].map((days) => <button key={days} className={preferences.preferred_range_days === days ? "active" : "secondary"} type="button" onClick={() => setRange(days)}>{days} days</button>)}</div>
-      <button type="button" onClick={() => void savePreferences({visible_summary_cards: allFields, hidden_summary_fields: [], preferred_range_days: 30, trusted_metric_names: [], untrusted_metric_names: [], default_chart_set: ["calories", "protein", "carbohydrates", "fat", "active_energy"], source_filters: {}})}>Reset defaults</button>
+    <section className="settings-grid">
+      <div className="panel">
+        <div className="panel-head"><h2>Summary Visibility</h2><Eye size={18} /></div>
+        <div className="toggle-list">{allFields.map((field) => <Switch key={field} label={fieldMeta[field].label} checked={preferences.visible_summary_cards.includes(field) && !preferences.hidden_summary_fields.includes(field)} onChange={(checked) => setField(field, checked)} />)}</div>
+      </div>
+      <div className="panel">
+        <div className="panel-head"><h2>Default Charts</h2><LineChartIcon size={18} /></div>
+        <div className="toggle-list">{allFields.map((field) => <Switch key={field} label={fieldMeta[field].label} checked={preferences.default_chart_set.includes(field)} onChange={(checked) => setChart(field, checked)} />)}</div>
+      </div>
+      <div className="panel">
+        <div className="panel-head"><h2>Default Range</h2><CalendarDays size={18} /></div>
+        <div className="range-grid">{rangeOptions.map((days) => <button key={days} className={preferences.preferred_range_days === days ? "range-card active" : "range-card"} type="button" onClick={() => setRange(days)}><strong>{days}</strong><span>days</span></button>)}</div>
+      </div>
+      <div className="panel">
+        <div className="panel-head"><h2>Reset and Coverage</h2><SettingsIcon size={18} /></div>
+        <p className="quality-copy">{metrics.length} metric definitions are available. {Object.keys(preferences.source_filters).length} metric source filters are active.</p>
+        <button type="button" onClick={() => void savePreferences({visible_summary_cards: allFields, hidden_summary_fields: [], preferred_range_days: 30, trusted_metric_names: [], untrusted_metric_names: [], default_chart_set: ["calories", "protein", "carbohydrates", "fat", "active_energy"], source_filters: {}})}>Reset defaults</button>
+      </div>
     </section>
   );
 }
 
-function DailyTable({rows, fields}: {rows: DailySummary[]; fields: SummaryField[]}) {
-  return <div className="table-wrap"><table><thead><tr><th>Date</th>{fields.map((field) => <th key={field}>{fieldMeta[field].label}</th>)}</tr></thead><tbody>{rows.map((row) => <tr key={row.date}><td>{row.date}</td>{fields.map((field) => <td key={field}>{fmt(row[field], fieldMeta[field].digits)}</td>)}</tr>)}</tbody></table></div>;
-}
-
-function Chart({rows, fields}: {rows: DailySummary[]; fields: SummaryField[]}) {
+function MultiMetricChart({rows, fields}: {rows: DailySummary[]; fields: SummaryField[]}) {
   return (
-    <ResponsiveContainer width="100%" height={280}>
-      <LineChart data={rows}>
-        <CartesianGrid strokeDasharray="3 3" />
-        <XAxis dataKey="date" minTickGap={26} />
-        <YAxis />
-        <Tooltip />
+    <ResponsiveContainer width="100%" height={340}>
+      <ComposedChart data={rows}>
+        <CartesianGrid strokeDasharray="3 3" stroke="#e7edf3" />
+        <XAxis dataKey="date" minTickGap={28} tickLine={false} />
+        <YAxis tickLine={false} axisLine={false} />
+        <Tooltip content={<ChartTooltip />} />
         <Legend />
-        {fields.map((field) => <Line key={field} type="monotone" dataKey={field} name={fieldMeta[field].label} stroke={fieldMeta[field].color} dot={false} strokeWidth={2} connectNulls />)}
-      </LineChart>
+        {fields.map((field, index) => {
+          const meta = fieldMeta[field];
+          return index === 0
+            ? <Area key={field} type="monotone" dataKey={field} name={meta.label} stroke={meta.color} fill={meta.soft} strokeWidth={2} connectNulls />
+            : <Line key={field} type="monotone" dataKey={field} name={meta.label} stroke={meta.color} dot={false} strokeWidth={2} connectNulls />;
+        })}
+      </ComposedChart>
     </ResponsiveContainer>
   );
+}
+
+function SingleMetricChart({rows, field}: {rows: DailySummary[]; field: SummaryField}) {
+  const meta = fieldMeta[field];
+  return (
+    <ResponsiveContainer width="100%" height={260}>
+      <AreaChart data={rows}>
+        <defs>
+          <linearGradient id={`fill-${field}`} x1="0" x2="0" y1="0" y2="1">
+            <stop offset="5%" stopColor={meta.color} stopOpacity={0.28} />
+            <stop offset="95%" stopColor={meta.color} stopOpacity={0.03} />
+          </linearGradient>
+        </defs>
+        <CartesianGrid strokeDasharray="3 3" stroke="#e7edf3" />
+        <XAxis dataKey="date" minTickGap={30} tickLine={false} />
+        <YAxis tickLine={false} axisLine={false} />
+        <Tooltip content={<ChartTooltip />} />
+        <Area type="monotone" dataKey={field} name={meta.label} stroke={meta.color} fill={`url(#fill-${field})`} strokeWidth={2} connectNulls />
+      </AreaChart>
+    </ResponsiveContainer>
+  );
+}
+
+function ComparisonBars({rows, fields}: {rows: DailySummary[]; fields: SummaryField[]}) {
+  const data = fields.map((field) => ({name: fieldMeta[field].short, current: average(secondHalf(rows), field), previous: average(firstHalf(rows), field), fill: fieldMeta[field].color}));
+  return (
+    <ResponsiveContainer width="100%" height={280}>
+      <BarChart data={data}>
+        <CartesianGrid strokeDasharray="3 3" stroke="#e7edf3" />
+        <XAxis dataKey="name" tickLine={false} />
+        <YAxis tickLine={false} axisLine={false} />
+        <Tooltip />
+        <Legend />
+        <Bar dataKey="previous" fill="#cbd5e1" name="Previous" radius={[4, 4, 0, 0]} />
+        <Bar dataKey="current" name="Current" radius={[4, 4, 0, 0]}>
+          {data.map((entry) => <Cell key={entry.name} fill={entry.fill} />)}
+        </Bar>
+      </BarChart>
+    </ResponsiveContainer>
+  );
+}
+
+function ConsistencyList({rows, fields}: {rows: DailySummary[]; fields: SummaryField[]}) {
+  return <div className="consistency-list">{fields.map((field) => {
+    const values = rows.map((row) => row[field]).filter((value): value is number => typeof value === "number");
+    const avg = average(rows, field);
+    const variance = avg ? Math.min(100, Math.round((standardDeviation(values) / avg) * 100)) : 0;
+    return <div className="consistency-item" key={field}><span>{fieldMeta[field].label}</span><strong>{variance}% variation</strong><div className="meter"><span style={{width: `${Math.max(4, 100 - variance)}%`, background: fieldMeta[field].color}} /></div></div>;
+  })}</div>;
+}
+
+function DailyTable({rows, fields, dense = false}: {rows: DailySummary[]; fields: SummaryField[]; dense?: boolean}) {
+  return <div className="table-wrap"><table className={dense ? "dense" : ""}><thead><tr><th>Date</th>{fields.map((field) => <th key={field}>{fieldMeta[field].short}</th>)}</tr></thead><tbody>{rows.map((row) => <tr key={row.date}><td>{row.date}</td>{fields.map((field) => <td key={field}>{fmt(row[field], fieldMeta[field].digits)}</td>)}</tr>)}</tbody></table></div>;
+}
+
+function DateField({label, value, setValue}: {label: string; value: string; setValue: (value: string) => void}) {
+  return <label className="date-field"><span>{label}</span><input type="date" value={value} onChange={(event) => setValue(event.target.value)} /></label>;
+}
+
+function IconButton({label, onClick, children}: {label: string; onClick: () => void; children: React.ReactNode}) {
+  return <button className="icon-button" type="button" title={label} onClick={onClick}>{children}</button>;
+}
+
+function StatusPill({icon: Icon, label, value, tone, spin}: {icon: React.ElementType; label: string; value: string; tone?: "good" | "warn" | "bad" | "active"; spin?: boolean}) {
+  return <div className={tone ? `status-pill ${tone}` : "status-pill"}><Icon className={spin ? "spin" : ""} size={17} /><span>{label}</span><strong>{value}</strong></div>;
+}
+
+function Switch({label, checked, onChange}: {label: string; checked: boolean; onChange: (checked: boolean) => void}) {
+  return <label className="switch-row"><span>{label}</span><input type="checkbox" checked={checked} onChange={(event) => onChange(event.target.checked)} /><i /></label>;
+}
+
+function List({items, empty}: {items: string[]; empty: string}) {
+  return items.length ? <div className="issue-list">{items.map((item) => <p key={item}>{item}</p>)}</div> : <p className="quality-copy">{empty}</p>;
+}
+
+function LoadingState() {
+  return <section className="loading-grid">{Array.from({length: 8}).map((_, index) => <div className="skeleton" key={index} />)}</section>;
+}
+
+function ChartTooltip({active, payload, label}: {active?: boolean; payload?: Array<{name: string; value: number; color: string}>; label?: string}) {
+  if (!active || !payload?.length) return null;
+  return <div className="chart-tooltip"><strong>{label}</strong>{payload.map((item) => <span key={item.name} style={{color: item.color}}>{item.name}: {fmt(item.value)}</span>)}</div>;
+}
+
+function activeTabLabel(tab: TabId): string {
+  return tabs.find((item) => item.id === tab)?.label || "Dashboard";
+}
+
+function headline(tab: TabId): string {
+  const labels: Record<TabId, string> = {
+    overview: "Daily nutrition and activity control room",
+    nutrition: "Macro adherence and calorie flow",
+    trends: "Configurable metric trend board",
+    metrics: "Metric catalog and source controls",
+    quality: "Data reliability and freshness",
+    settings: "Dashboard preferences"
+  };
+  return labels[tab];
+}
+
+function subhead(tab: TabId, rangeDays: number, loadedDays: number): string {
+  if (tab === "metrics") return "Search, trust, filter, export, and map raw Health Auto Export metrics.";
+  if (tab === "quality") return "Find stale, missing, suspicious, or hidden fields before they affect decisions.";
+  return `${loadedDays} loaded days across the selected ${rangeDays} day window.`;
+}
+
+function filterCatalog(metrics: MetricCatalogItem[], search: string, filter: "all" | "dashboard" | "untrusted" | "stale") {
+  const query = search.toLowerCase();
+  return metrics.filter((metric) => {
+    const matches = `${metric.name} ${metric.units || ""} ${metric.sources.join(" ")} ${metric.dashboard_field || ""}`.toLowerCase().includes(query);
+    if (!matches) return false;
+    if (filter === "dashboard") return Boolean(metric.dashboard_field);
+    if (filter === "untrusted") return !metric.is_trusted;
+    if (filter === "stale") return Boolean(metric.last_date && metric.last_date < isoDate(-14));
+    return true;
+  });
+}
+
+function qualitySnapshot(rows: DailySummary[], metrics: MetricCatalogItem[], preferences: Preferences | null) {
+  const missingTotal = rows.reduce((total, row) => total + allFields.filter((field) => row[field] === null || row[field] === undefined).length, 0);
+  const totalSlots = Math.max(1, rows.length * allFields.length);
+  const staleCount = metrics.filter((metric) => metric.last_date && metric.last_date < isoDate(-14)).length;
+  const disabledFields = allFields.filter((field) => preferences?.hidden_summary_fields.includes(field) || !preferences?.visible_summary_cards.includes(field));
+  const untrustedMetrics = preferences?.untrusted_metric_names || [];
+  const score = Math.max(0, Math.round(100 - (missingTotal / totalSlots) * 70 - staleCount * 1.5 - untrustedMetrics.length * 2));
+  return {score, missingTotal, staleCount, disabledFields, untrustedMetrics};
+}
+
+function buildInsights(rows: DailySummary[], dataHealth: ReturnType<typeof qualitySnapshot>) {
+  const calorieTrend = deltaPercent(rows, "calories");
+  const proteinAvg = average(rows.slice(-7), "protein");
+  const missing = dataHealth.missingTotal;
+  return [
+    {title: calorieTrend >= 0 ? "Calories trending up" : "Calories trending down", detail: `${Math.abs(calorieTrend).toFixed(1)}% versus the previous comparable window.`, icon: calorieTrend >= 0 ? TrendingUp : TrendingDown},
+    {title: "Protein 7 day average", detail: proteinAvg === null ? "No usable protein entries in range." : `${fmt(proteinAvg)} g per day.`, icon: Utensils},
+    {title: missing ? "Missing data needs review" : "No missing dashboard fields", detail: missing ? `${missing} field-days are missing in this range.` : "Visible dashboard fields are complete.", icon: missing ? AlertTriangle : CheckCircle2}
+  ];
+}
+
+function suspiciousValues(rows: DailySummary[]) {
+  const issues: string[] = [];
+  rows.forEach((row) => {
+    if ((row.calories || 0) > 6000) issues.push(`${row.date}: calories above 6,000 kcal`);
+    if ((row.water || 0) > 10000) issues.push(`${row.date}: water above 10,000 mL`);
+    if ((row.steps || 0) > 70000) issues.push(`${row.date}: steps above 70,000`);
+    if ((row.weight || 0) > 250) issues.push(`${row.date}: weight above 250 kg`);
+  });
+  return issues;
 }
 
 function average(rows: DailySummary[], field: SummaryField): number | null {
@@ -336,6 +794,40 @@ function average(rows: DailySummary[], field: SummaryField): number | null {
 
 function sum(rows: DailySummary[], field: SummaryField): number {
   return rows.reduce((total, row) => total + (row[field] || 0), 0);
+}
+
+function standardDeviation(values: number[]) {
+  if (!values.length) return 0;
+  const avg = values.reduce((total, value) => total + value, 0) / values.length;
+  return Math.sqrt(values.reduce((total, value) => total + (value - avg) ** 2, 0) / values.length);
+}
+
+function firstHalf(rows: DailySummary[]) {
+  return rows.slice(0, Math.floor(rows.length / 2));
+}
+
+function secondHalf(rows: DailySummary[]) {
+  return rows.slice(Math.floor(rows.length / 2));
+}
+
+function deltaPercent(rows: DailySummary[], field: SummaryField) {
+  const previous = average(firstHalf(rows), field);
+  const current = average(secondHalf(rows), field);
+  if (!previous || current === null) return 0;
+  return ((current - previous) / previous) * 100;
+}
+
+function daysBetween(start: string, end: string) {
+  const from = new Date(`${start}T00:00:00Z`).getTime();
+  const to = new Date(`${end}T00:00:00Z`).getTime();
+  return Math.max(0, Math.round((to - from) / 86_400_000));
+}
+
+function formatDateTime(value: string | null | undefined) {
+  if (!value) return "Never";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString(undefined, {month: "short", day: "numeric", hour: "2-digit", minute: "2-digit"});
 }
 
 createRoot(document.getElementById("root") as HTMLElement).render(<App />);
