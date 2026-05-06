@@ -23,6 +23,14 @@ class Settings(BaseSettings):
             "MACROFACTOR_HEALTH_EXPORT_API_KEY",
         ),
     )
+    read_api_key: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "HEALTH_EXPORT_READ_API_KEY",
+            "READ_API_KEY",
+            "MACROFACTOR_HEALTH_EXPORT_READ_API_KEY",
+        ),
+    )
     sqlite_path: str = Field(
         default="health_export.sqlite3",
         validation_alias=AliasChoices(

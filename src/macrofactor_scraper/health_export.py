@@ -118,6 +118,45 @@ class HealthAutoExportService:
         items = self._daily_summary_items(start, end)
         return DailySummaryResponse(count=len(items), summaries=items)
 
+    def excel_daily_log_rows(self, start: date | None = None, end: date | None = None) -> list[dict[str, float | str | None]]:
+        self._ensure_schema()
+        _validate_range(start, end)
+        return [
+            {
+                "date": item.date.isoformat(),
+                "calories": item.calories,
+                "protein": item.protein,
+                "carbohydrates": item.carbohydrates,
+                "fat": item.fat,
+                "water": item.water,
+                "weight": item.weight,
+                "steps": item.steps,
+                "active_energy": item.active_energy,
+            }
+            for item in self._daily_summary_items(start, end, include_hidden=True)
+        ]
+
+    def excel_calories_weight_rows(self, start: date | None = None, end: date | None = None) -> list[dict[str, float | str | None]]:
+        self._ensure_schema()
+        _validate_range(start, end)
+        rows = self._daily_summary_items(start, end, include_hidden=True)
+        first_weight: float | None = None
+        output: list[dict[str, float | str | None]] = []
+        for index, item in enumerate(rows):
+            if first_weight is None and item.weight is not None:
+                first_weight = item.weight
+            trailing = [row.calories for row in rows[max(0, index - 6) : index + 1] if row.calories is not None]
+            output.append(
+                {
+                    "date": item.date.isoformat(),
+                    "calories": item.calories,
+                    "weight": item.weight,
+                    "rolling_calories_7d": sum(trailing) / len(trailing) if trailing else None,
+                    "weight_delta": item.weight - first_weight if item.weight is not None and first_weight is not None else None,
+                }
+            )
+        return output
+
     def dashboard_summary(
         self,
         start: date | None = None,

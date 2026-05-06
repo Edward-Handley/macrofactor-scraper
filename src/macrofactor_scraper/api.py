@@ -72,6 +72,11 @@ def _valid_api_key(candidate: str | None, settings: Settings) -> bool:
     return bool(settings.ingest_api_key and candidate and hmac.compare_digest(candidate, settings.ingest_api_key))
 
 
+def _valid_read_api_key(candidate: str | None, settings: Settings) -> bool:
+    expected = settings.read_api_key or settings.ingest_api_key
+    return bool(expected and candidate and hmac.compare_digest(candidate, expected))
+
+
 def _sign_session(expires_at: int, secret: str) -> str:
     payload = str(expires_at).encode("utf-8")
     signature = hmac.new(secret.encode("utf-8"), payload, sha256).hexdigest()
@@ -100,9 +105,9 @@ def require_private_access(
     x_api_key: str | None = Header(default=None),
     settings: Settings = Depends(get_settings),
 ) -> None:
-    if not settings.ingest_api_key:
-        raise HTTPException(status_code=500, detail="API key is not configured")
-    if _valid_api_key(x_api_key, settings):
+    if not (settings.read_api_key or settings.ingest_api_key):
+        raise HTTPException(status_code=500, detail="Read API key is not configured")
+    if _valid_read_api_key(x_api_key, settings):
         return
     if _verify_session(request.cookies.get(SESSION_COOKIE_NAME), settings):
         return
@@ -312,6 +317,75 @@ def _csv_response(body: str, filename: str) -> Response:
         media_type="text/csv; charset=utf-8",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
+
+@app.get("/v1/excel/daily-log.csv", dependencies=[Depends(require_private_access)])
+async def excel_daily_log(
+    start: date | None = None,
+    end: date | None = None,
+    service: HealthAutoExportService = Depends(get_health_export_service),
+) -> Response:
+    try:
+        rows = service.excel_daily_log_rows(start, end)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return _csv_rows_response(
+        rows,
+        ["date", "calories", "protein", "carbohydrates", "fat", "water", "weight", "steps", "active_energy"],
+        "excel-daily-log.csv",
+    )
+
+
+@app.get("/v1/excel/calories-weight.csv", dependencies=[Depends(require_private_access)])
+async def excel_calories_weight(
+    start: date | None = None,
+    end: date | None = None,
+    service: HealthAutoExportService = Depends(get_health_export_service),
+) -> Response:
+    try:
+        rows = service.excel_calories_weight_rows(start, end)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return _csv_rows_response(
+        rows,
+        ["date", "calories", "weight", "rolling_calories_7d", "weight_delta"],
+        "excel-calories-weight.csv",
+    )
+
+
+@app.get("/v1/excel/metrics/{metric_name}.csv", dependencies=[Depends(require_private_access)])
+async def excel_metric_records(
+    metric_name: str,
+    start: date | None = None,
+    end: date | None = None,
+    service: HealthAutoExportService = Depends(get_health_export_service),
+) -> Response:
+    try:
+        records = service.metric_records(metric_name, start, end)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    rows = [
+        {
+            "id": item.id,
+            "metric_name": item.metric_name,
+            "units": item.units,
+            "date": item.date.isoformat() if item.date else None,
+            "timestamp": item.timestamp.isoformat() if item.timestamp else None,
+            "quantity": item.quantity,
+            "source": item.source,
+        }
+        for item in records.records
+    ]
+    return _csv_rows_response(rows, ["id", "metric_name", "units", "date", "timestamp", "quantity", "source"], f"excel-{metric_name}.csv")
+
+
+def _csv_rows_response(rows: list[dict[str, object]], fieldnames: list[str], filename: str) -> Response:
+    output = io.StringIO()
+    writer = csv.DictWriter(output, fieldnames=fieldnames, extrasaction="ignore")
+    writer.writeheader()
+    for row in rows:
+        writer.writerow({field: "" if row.get(field) is None else row.get(field) for field in fieldnames})
+    return _csv_response(output.getvalue(), filename)
 
 
 def _read_static(filename: str, *, error: str | None = None) -> str:

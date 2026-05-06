@@ -8,6 +8,8 @@ import {
   CheckCircle2,
   ChevronDown,
   CircleGauge,
+  Clipboard,
+  Code2,
   Database,
   Download,
   Droplets,
@@ -20,6 +22,7 @@ import {
   LineChart as LineChartIcon,
   Loader2,
   LogOut,
+  FileSpreadsheet,
   RefreshCw,
   Search,
   Settings as SettingsIcon,
@@ -53,7 +56,7 @@ import {
 import "./styles.css";
 
 type SummaryField = "calories" | "protein" | "carbohydrates" | "fat" | "water" | "weight" | "steps" | "active_energy";
-type TabId = "overview" | "nutrition" | "trends" | "calorie_weight" | "sources" | "metrics" | "quality" | "settings";
+type TabId = "overview" | "nutrition" | "trends" | "calorie_weight" | "sources" | "metrics" | "api_explorer" | "quality" | "settings";
 type ScaleMode = "auto" | "zero" | "tight" | "indexed";
 
 type DailySummary = Record<SummaryField, number | null> & {date: string};
@@ -97,6 +100,20 @@ type IngestStatus = {
   last_date: string | null;
 };
 
+type ExplorerDatasetId =
+  | "dashboard_summary"
+  | "daily_summary"
+  | "metric_catalog"
+  | "metric_records"
+  | "workouts"
+  | "ingest_status"
+  | "preferences"
+  | "csv_daily"
+  | "csv_metric"
+  | "excel_daily_log"
+  | "excel_calories_weight"
+  | "excel_metric";
+
 const fieldMeta: Record<SummaryField, {label: string; short: string; unit: string; color: string; soft: string; icon: React.ElementType; digits?: number}> = {
   calories: {label: "Calories", short: "Cal", unit: "kcal", color: "#2563eb", soft: "#dbeafe", icon: Flame},
   protein: {label: "Protein", short: "Pro", unit: "g", color: "#16a34a", soft: "#dcfce7", icon: Utensils},
@@ -120,8 +137,24 @@ const tabs: Array<{id: TabId; label: string; icon: React.ElementType}> = [
   {id: "calorie_weight", label: "Calories vs Weight", icon: Weight},
   {id: "sources", label: "Sources", icon: Database},
   {id: "metrics", label: "Metrics", icon: Database},
+  {id: "api_explorer", label: "API Explorer", icon: Code2},
   {id: "quality", label: "Data Quality", icon: ShieldCheck},
   {id: "settings", label: "Settings", icon: SettingsIcon}
+];
+
+const explorerDatasets: Array<{id: ExplorerDatasetId; label: string; path: string; rowKey?: string; needsRange?: boolean; needsMetric?: boolean; isCsv?: boolean; excel?: boolean}> = [
+  {id: "dashboard_summary", label: "Dashboard summary", path: "/v1/dashboard/summary", rowKey: "summaries", needsRange: true},
+  {id: "daily_summary", label: "Daily summary", path: "/v1/daily-summary", rowKey: "summaries", needsRange: true},
+  {id: "metric_catalog", label: "Metric catalog", path: "/v1/dashboard/metric-catalog", rowKey: "metrics"},
+  {id: "metric_records", label: "Metric records", path: "/v1/metrics/{metric}", rowKey: "records", needsRange: true, needsMetric: true},
+  {id: "workouts", label: "Workouts", path: "/v1/workouts", rowKey: "workouts", needsRange: true},
+  {id: "ingest_status", label: "Ingest status", path: "/v1/ingest/status"},
+  {id: "preferences", label: "Preferences", path: "/v1/dashboard/preferences"},
+  {id: "csv_daily", label: "CSV export: daily summary", path: "/v1/export/daily-summary.csv", needsRange: true, isCsv: true},
+  {id: "csv_metric", label: "CSV export: metric records", path: "/v1/export/metrics/{metric}.csv", needsRange: true, needsMetric: true, isCsv: true},
+  {id: "excel_daily_log", label: "Excel feed: daily log", path: "/v1/excel/daily-log.csv", needsRange: true, isCsv: true, excel: true},
+  {id: "excel_calories_weight", label: "Excel feed: calories vs weight", path: "/v1/excel/calories-weight.csv", needsRange: true, isCsv: true, excel: true},
+  {id: "excel_metric", label: "Excel feed: raw metric", path: "/v1/excel/metrics/{metric}.csv", needsRange: true, needsMetric: true, isCsv: true, excel: true}
 ];
 
 function isoDate(offsetDays: number): string {
@@ -298,6 +331,7 @@ function App() {
           {!loading && activeTab === "calorie_weight" && <CalorieWeight rows={rows} />}
           {!loading && activeTab === "sources" && <SourceExplorer metrics={catalog} selectedSource={activeSource} setSelectedSource={setSelectedSource} sourceOptions={sourceOptions} preferences={preferences} savePreferences={savePreferences} />}
           {!loading && activeTab === "metrics" && <Metrics metrics={filteredCatalog} catalog={catalog} search={search} setSearch={setSearch} filter={catalogFilter} setFilter={setCatalogFilter} preferences={preferences} savePreferences={savePreferences} />}
+          {!loading && activeTab === "api_explorer" && <ApiExplorer catalog={catalog} start={start} end={end} setStart={setStart} setEnd={setEnd} />}
           {!loading && activeTab === "quality" && <DataQuality rows={rows} metrics={catalog} preferences={preferences} savePreferences={savePreferences} snapshot={dataHealth} />}
           {!loading && activeTab === "settings" && preferences ? <Settings preferences={preferences} savePreferences={savePreferences} loadRange={load} metrics={catalog} /> : null}
         </main>
@@ -743,6 +777,115 @@ function DataQuality({rows, metrics, preferences, savePreferences, snapshot}: {r
   );
 }
 
+function ApiExplorer({catalog, start, end, setStart, setEnd}: {catalog: MetricCatalogItem[]; start: string; end: string; setStart: (value: string) => void; setEnd: (value: string) => void}) {
+  const defaultMetric = catalog[0]?.name || "dietary_energy";
+  const [datasetId, setDatasetId] = useState<ExplorerDatasetId>("excel_daily_log");
+  const [metric, setMetric] = useState(defaultMetric);
+  const [preview, setPreview] = useState<unknown>(null);
+  const [csvText, setCsvText] = useState("");
+  const [loadingPreview, setLoadingPreview] = useState(false);
+  const [message, setMessage] = useState("");
+  const dataset = explorerDatasets.find((item) => item.id === datasetId) || explorerDatasets[0];
+  const url = buildExplorerUrl(dataset, start, end, metric);
+  const absoluteUrl = `${window.location.origin}${url}`;
+  const rows = useMemo(() => explorerRows(preview, csvText, dataset), [preview, csvText, dataset]);
+  const fields = useMemo(() => explorerFields(rows, preview), [rows, preview]);
+  const missing = useMemo(() => missingCounts(rows, fields), [rows, fields]);
+  const chartField = fields.find((field) => field !== "date" && rows.some((row) => typeof row[field] === "number"));
+
+  useEffect(() => {
+    if (!metric && defaultMetric) setMetric(defaultMetric);
+  }, [defaultMetric, metric]);
+
+  async function loadPreview() {
+    setLoadingPreview(true);
+    setMessage("");
+    try {
+      if (dataset.isCsv) {
+        const response = await fetch(url);
+        if (response.status === 401) {
+          location.href = "/login";
+          return;
+        }
+        if (!response.ok) throw new Error("Request failed");
+        const text = await response.text();
+        setCsvText(text);
+        setPreview(null);
+      } else {
+        setCsvText("");
+        setPreview(await api<unknown>(url));
+      }
+    } catch {
+      setMessage("Could not load this dataset.");
+    } finally {
+      setLoadingPreview(false);
+    }
+  }
+
+  useEffect(() => {
+    void loadPreview();
+  }, [datasetId, metric, start, end]);
+
+  async function copy(value: string) {
+    await navigator.clipboard.writeText(value);
+    setMessage("Copied.");
+  }
+
+  return (
+    <section className="dashboard-grid api-explorer">
+      <div className="panel span-12">
+        <div className="panel-head">
+          <div>
+            <h2>API Explorer</h2>
+            <span className="muted">Browse private datasets, inspect fields, and build refreshable Excel Power Query feeds.</span>
+          </div>
+          <button className="small" type="button" onClick={loadPreview}>{loadingPreview ? <Loader2 className="spin" size={15} /> : <RefreshCw size={15} />} Load</button>
+        </div>
+        <div className="explorer-controls">
+          <label className="select-field"><span>Dataset</span><select value={datasetId} onChange={(event) => setDatasetId(event.target.value as ExplorerDatasetId)}>{explorerDatasets.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}</select></label>
+          {dataset.needsMetric ? <label className="select-field"><span>Metric</span><select value={metric} onChange={(event) => setMetric(event.target.value)}>{catalog.map((item) => <option key={`${item.name}-${item.units || ""}`} value={item.name}>{item.name}{item.units ? ` (${item.units})` : ""}</option>)}</select></label> : null}
+          {dataset.needsRange ? <DateField label="Start" value={start} setValue={setStart} /> : null}
+          {dataset.needsRange ? <DateField label="End" value={end} setValue={setEnd} /> : null}
+          <a className="button explorer-download" href={url}><Download size={16} /> {dataset.isCsv ? "CSV" : "Open"}</a>
+        </div>
+        {message ? <div className="notice compact"><CheckCircle2 size={18} />{message}</div> : null}
+      </div>
+
+      <div className="panel span-3 source-stat"><span className="eyebrow">Rows</span><strong>{rows.length}</strong><small>{dataset.isCsv ? "CSV preview rows" : "JSON records"}</small></div>
+      <div className="panel span-3 source-stat"><span className="eyebrow">Fields</span><strong>{fields.length}</strong><small>{fields.slice(0, 4).join(", ") || "No fields yet"}</small></div>
+      <div className="panel span-3 source-stat"><span className="eyebrow">Missing cells</span><strong>{Object.values(missing).reduce((total, value) => total + value, 0)}</strong><small>Blank, null, or undefined values</small></div>
+      <div className="panel span-3 source-stat"><span className="eyebrow">Format</span><strong>{dataset.isCsv ? "CSV" : "JSON"}</strong><small>{dataset.excel ? "Excel-ready feed" : "Dashboard API"}</small></div>
+
+      <div className="panel span-8">
+        <div className="panel-head"><h2>Preview</h2><Table2 size={18} /></div>
+        {rows.length ? <GenericTable rows={rows.slice(0, 25)} fields={fields.slice(0, 10)} /> : <p className="quality-copy">No rows returned for the selected dataset and range.</p>}
+      </div>
+      <div className="panel span-4">
+        <div className="panel-head"><h2>Fields</h2><Database size={18} /></div>
+        <div className="field-list">{fields.map((field) => <div key={field}><strong>{field}</strong><span>{missing[field] || 0} missing</span></div>)}</div>
+      </div>
+      <div className="panel span-6">
+        <div className="panel-head"><h2>Chart Preview</h2><LineChartIcon size={18} /></div>
+        {chartField ? <ExplorerChart rows={rows} field={chartField} /> : <p className="quality-copy">No numeric field is available to chart.</p>}
+      </div>
+      <div className="panel span-6">
+        <div className="panel-head"><h2>Excel Power Query</h2><FileSpreadsheet size={18} /></div>
+        <div className="copy-stack">
+          <label><span>URL</span><input readOnly value={absoluteUrl} /></label>
+          <button className="small" type="button" onClick={() => copy(absoluteUrl)}><Clipboard size={15} /> Copy URL</button>
+          <label><span>Header</span><input readOnly value="X-API-Key: <HEALTH_EXPORT_READ_API_KEY>" /></label>
+          <button className="small" type="button" onClick={() => copy("X-API-Key: <HEALTH_EXPORT_READ_API_KEY>")}><Clipboard size={15} /> Copy header</button>
+        </div>
+        <p className="quality-copy">In Excel, use Data from Web, choose Advanced, paste the URL, and add an `X-API-Key` request header with the read token.</p>
+      </div>
+      <div className="panel span-12">
+        <div className="panel-head"><h2>Raw Response</h2><Code2 size={18} /></div>
+        <pre className="raw-panel">{dataset.isCsv ? csvText : JSON.stringify(preview, null, 2)}</pre>
+      </div>
+    </section>
+  );
+}
+
 function Settings({preferences, savePreferences, loadRange, metrics}: {preferences: Preferences; savePreferences: (value: Preferences) => Promise<void>; loadRange: (rangeDays?: number) => Promise<void>; metrics: MetricCatalogItem[]}) {
   function setField(field: SummaryField, enabled: boolean) {
     const visible = new Set(preferences.visible_summary_cards);
@@ -893,6 +1036,107 @@ function ChartTooltip({active, payload, label}: {active?: boolean; payload?: Arr
   return <div className="chart-tooltip"><strong>{label}</strong>{payload.map((item) => <span key={item.name} style={{color: item.color}}>{item.name}: {fmt(item.value)}</span>)}</div>;
 }
 
+function GenericTable({rows, fields}: {rows: Array<Record<string, unknown>>; fields: string[]}) {
+  return <div className="table-wrap"><table className="dense"><thead><tr>{fields.map((field) => <th key={field}>{field}</th>)}</tr></thead><tbody>{rows.map((row, index) => <tr key={index}>{fields.map((field) => <td key={field}>{formatCell(row[field])}</td>)}</tr>)}</tbody></table></div>;
+}
+
+function ExplorerChart({rows, field}: {rows: Array<Record<string, unknown>>; field: string}) {
+  const data = rows.filter((row) => typeof row[field] === "number").map((row, index) => ({date: String(row.date || row.timestamp || index + 1), value: row[field] as number}));
+  return (
+    <ResponsiveContainer width="100%" height={260}>
+      <AreaChart data={data}>
+        <CartesianGrid strokeDasharray="3 3" stroke="#e7edf3" />
+        <XAxis dataKey="date" minTickGap={30} tickLine={false} />
+        <YAxis tickLine={false} axisLine={false} />
+        <Tooltip />
+        <Area type="monotone" dataKey="value" name={field} stroke="#0f766e" fill="#d9f6f2" strokeWidth={2} connectNulls />
+      </AreaChart>
+    </ResponsiveContainer>
+  );
+}
+
+function buildExplorerUrl(dataset: (typeof explorerDatasets)[number], start: string, end: string, metric: string) {
+  const path = dataset.path.replace("{metric}", encodeURIComponent(metric || "dietary_energy"));
+  const params = new URLSearchParams();
+  if (dataset.needsRange) {
+    if (start) params.set("start", start);
+    if (end) params.set("end", end);
+  }
+  const query = params.toString();
+  return query ? `${path}?${query}` : path;
+}
+
+function explorerRows(preview: unknown, csvText: string, dataset: (typeof explorerDatasets)[number]): Array<Record<string, unknown>> {
+  if (dataset.isCsv) return parseCsvPreview(csvText);
+  if (Array.isArray(preview)) return preview.filter(isRecord);
+  if (isRecord(preview)) {
+    const keyed = dataset.rowKey ? preview[dataset.rowKey] : null;
+    if (Array.isArray(keyed)) return keyed.filter(isRecord);
+    return [preview];
+  }
+  return [];
+}
+
+function explorerFields(rows: Array<Record<string, unknown>>, preview: unknown) {
+  const fields = new Set<string>();
+  rows.slice(0, 50).forEach((row) => Object.keys(row).forEach((field) => fields.add(field)));
+  if (!fields.size && isRecord(preview)) Object.keys(preview).forEach((field) => fields.add(field));
+  return [...fields];
+}
+
+function missingCounts(rows: Array<Record<string, unknown>>, fields: string[]) {
+  return Object.fromEntries(fields.map((field) => [field, rows.filter((row) => row[field] === null || row[field] === undefined || row[field] === "").length]));
+}
+
+function parseCsvPreview(text: string): Array<Record<string, unknown>> {
+  const [headerLine, ...lines] = text.trim().split(/\r?\n/);
+  if (!headerLine) return [];
+  const headers = splitCsvLine(headerLine);
+  return lines.slice(0, 100).map((line) => {
+    const values = splitCsvLine(line);
+    return Object.fromEntries(headers.map((header, index) => [header, coerceCsvValue(values[index] ?? "")]));
+  });
+}
+
+function splitCsvLine(line: string) {
+  const values: string[] = [];
+  let current = "";
+  let quoted = false;
+  for (let index = 0; index < line.length; index += 1) {
+    const char = line[index];
+    if (char === '"' && line[index + 1] === '"') {
+      current += '"';
+      index += 1;
+    } else if (char === '"') {
+      quoted = !quoted;
+    } else if (char === "," && !quoted) {
+      values.push(current);
+      current = "";
+    } else {
+      current += char;
+    }
+  }
+  values.push(current);
+  return values;
+}
+
+function coerceCsvValue(value: string): string | number | null {
+  if (value === "") return null;
+  const numeric = Number(value);
+  return Number.isFinite(numeric) && value.trim() !== "" ? numeric : value;
+}
+
+function formatCell(value: unknown) {
+  if (value === null || value === undefined || value === "") return "";
+  if (typeof value === "number") return fmt(value, Number.isInteger(value) ? 0 : 2);
+  if (typeof value === "object") return JSON.stringify(value);
+  return String(value);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value));
+}
+
 function activeTabLabel(tab: TabId): string {
   return tabs.find((item) => item.id === tab)?.label || "Dashboard";
 }
@@ -905,6 +1149,7 @@ function headline(tab: TabId): string {
     calorie_weight: "Calories in versus weight change",
     sources: "Source-level data explorer",
     metrics: "Metric catalog and source controls",
+    api_explorer: "API Explorer and Excel feeds",
     quality: "Data reliability and freshness",
     settings: "Dashboard preferences"
   };
@@ -913,6 +1158,7 @@ function headline(tab: TabId): string {
 
 function subhead(tab: TabId, rangeDays: number, loadedDays: number): string {
   if (tab === "metrics") return "Search, trust, filter, export, and map raw Health Auto Export metrics.";
+  if (tab === "api_explorer") return "Preview private API datasets and generate Excel Power Query URL/header pairs.";
   if (tab === "quality") return "Find stale, missing, suspicious, or hidden fields before they affect decisions.";
   if (tab === "sources") return "Choose an Apple Health or MacroFactor source and inspect coverage, trust, freshness, and exports.";
   if (tab === "calorie_weight") return "Compare calorie intake with weight movement using a tight weight axis and rolling calorie averages.";

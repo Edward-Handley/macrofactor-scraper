@@ -765,6 +765,94 @@ td small {
   font: inherit;
 }
 
+.explorer-controls {
+  display: grid;
+  grid-template-columns: minmax(240px, 1.2fr) minmax(220px, 1fr) repeat(2, minmax(150px, 0.6fr)) auto;
+  align-items: end;
+  gap: 10px;
+}
+
+.api-explorer .select-field {
+  justify-self: stretch;
+  width: 100%;
+}
+
+.explorer-download {
+  gap: 6px;
+  min-width: 82px;
+  padding: 0 12px;
+}
+
+.field-list {
+  display: grid;
+  gap: 8px;
+  max-height: 310px;
+  overflow: auto;
+}
+
+.field-list div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.field-list strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--strong);
+  font-size: 0.88rem;
+  text-overflow: ellipsis;
+}
+
+.field-list span {
+  color: var(--muted);
+  font-size: 0.78rem;
+  white-space: nowrap;
+}
+
+.copy-stack {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.copy-stack label {
+  display: grid;
+  gap: 4px;
+}
+
+.copy-stack label span {
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 850;
+  text-transform: uppercase;
+}
+
+.copy-stack input {
+  width: 100%;
+}
+
+.raw-panel {
+  max-height: 360px;
+  overflow: auto;
+  margin: 0;
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  background: #101820;
+  color: #e7edf3;
+  padding: 12px;
+  font-size: 0.82rem;
+  line-height: 1.45;
+}
+
+.notice.compact {
+  margin: 12px 0 0;
+}
+
 .source-stat {
   min-height: 122px;
 }
@@ -1127,6 +1215,10 @@ a.small-link {
   .catalog-toolbar {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .explorer-controls, .copy-stack {
+    grid-template-columns: 1fr;
   }
 
   .chart-grid {

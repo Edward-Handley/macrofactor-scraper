@@ -88,6 +88,7 @@ Set:
 DOMAIN=health.example.com
 ENVIRONMENT=production
 HEALTH_EXPORT_API_KEY=paste-the-generated-secret
+HEALTH_EXPORT_READ_API_KEY=paste-a-read-only-secret
 HEALTH_EXPORT_SQLITE_PATH=/data/health_export.sqlite3
 SESSION_SECRET=paste-a-second-generated-secret
 DASHBOARD_PASSWORD=paste-a-dashboard-password
@@ -108,8 +109,8 @@ Test:
 ```bash
 curl https://health.example.com/health
 curl -i https://health.example.com/v1/metrics
-curl -H "X-API-Key: paste-the-generated-secret" https://health.example.com/v1/metrics
-curl -H "X-API-Key: paste-the-generated-secret" https://health.example.com/v1/dashboard/preferences
+curl -H "X-API-Key: paste-a-read-only-secret" https://health.example.com/v1/metrics
+curl -H "X-API-Key: paste-a-read-only-secret" https://health.example.com/v1/dashboard/preferences
 ```
 
 Expected:
@@ -118,7 +119,7 @@ Expected:
 {"status":"ok"}
 ```
 
-The unauthenticated `/v1/metrics` request should return `401`. The authenticated request should return metric JSON.
+The unauthenticated `/v1/metrics` request should return `401`. The authenticated read-key request should return metric JSON.
 
 ## 9. Configure Health Auto Export
 
@@ -137,10 +138,11 @@ Start with Health Metrics, then add a second automation for Workouts if desired.
 ## 10. Check Data
 
 ```bash
-curl -H "X-API-Key: paste-the-generated-secret" https://health.example.com/v1/metrics
-curl -H "X-API-Key: paste-the-generated-secret" "https://health.example.com/v1/daily-summary?start=2026-05-01&end=2026-05-05"
-curl -H "X-API-Key: paste-the-generated-secret" https://health.example.com/v1/ingest/status
-curl -H "X-API-Key: paste-the-generated-secret" https://health.example.com/v1/dashboard/metric-catalog
+curl -H "X-API-Key: paste-a-read-only-secret" https://health.example.com/v1/metrics
+curl -H "X-API-Key: paste-a-read-only-secret" "https://health.example.com/v1/daily-summary?start=2026-05-01&end=2026-05-05"
+curl -H "X-API-Key: paste-a-read-only-secret" https://health.example.com/v1/ingest/status
+curl -H "X-API-Key: paste-a-read-only-secret" https://health.example.com/v1/dashboard/metric-catalog
+curl -H "X-API-Key: paste-a-read-only-secret" "https://health.example.com/v1/excel/daily-log.csv?start=2026-05-01&end=2026-05-05"
 ```
 
 Open `https://health.example.com/` in a browser and sign in with `DASHBOARD_PASSWORD`.

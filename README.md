@@ -9,8 +9,8 @@ This project previously explored direct MacroFactor Firebase reads. The default 
 Implemented:
 
 - `POST /v1/ingest/health-auto-export` with `X-API-Key` authentication.
-- Private API reads with `X-API-Key` authentication or a signed dashboard session cookie.
-- Browser dashboard with login, React charts, daily summary cards, metric catalog, data quality views, saved preferences, ingest status, and CSV exports.
+- Private API reads with a dedicated read `X-API-Key` or a signed dashboard session cookie.
+- Browser dashboard with login, React charts, daily summary cards, API Explorer, metric catalog, data quality views, saved preferences, ingest status, and CSV/Excel feed exports.
 - Generic Health Auto Export JSON metric ingestion for objects shaped like `name`, `units`, and `data`.
 - SQLite storage for raw ingest batches, normalized health metric rows, and workout rows.
 - Metric listing, per-metric date filtering, daily summaries, dashboard summaries, workouts, ingest status, CSV exports, and health check routes.
@@ -35,12 +35,14 @@ Edit `.env`:
 
 ```dotenv
 HEALTH_EXPORT_API_KEY=change-me-local-secret
+HEALTH_EXPORT_READ_API_KEY=change-me-read-secret
 HEALTH_EXPORT_SQLITE_PATH=health_export.sqlite3
 SESSION_SECRET=change-me-session-secret
 DASHBOARD_PASSWORD=change-me-dashboard-password
 ```
 
-`HEALTH_EXPORT_API_KEY` is the shared secret Health Auto Export sends in the `X-API-Key` header.
+`HEALTH_EXPORT_API_KEY` is the ingest-only secret Health Auto Export sends in the `X-API-Key` header.
+`HEALTH_EXPORT_READ_API_KEY` is the read-only secret for API reads, CSV exports, and Excel Power Query refreshes. If it is unset, read endpoints temporarily accept `HEALTH_EXPORT_API_KEY` for backward compatibility.
 `SESSION_SECRET` signs dashboard cookies. `DASHBOARD_PASSWORD` is used for browser login and defaults to `HEALTH_EXPORT_API_KEY` if unset.
 
 ## Run
@@ -88,8 +90,13 @@ npm run build
 - `GET /v1/ingest/status`
 - `GET /v1/export/daily-summary.csv?start=YYYY-MM-DD&end=YYYY-MM-DD`
 - `GET /v1/export/metrics/{metric_name}.csv?start=YYYY-MM-DD&end=YYYY-MM-DD`
+- `GET /v1/excel/daily-log.csv?start=YYYY-MM-DD&end=YYYY-MM-DD`
+- `GET /v1/excel/calories-weight.csv?start=YYYY-MM-DD&end=YYYY-MM-DD`
+- `GET /v1/excel/metrics/{metric_name}.csv?start=YYYY-MM-DD&end=YYYY-MM-DD`
 
-All `/v1` read endpoints require either `X-API-Key: <HEALTH_EXPORT_API_KEY>` or a dashboard login session cookie. `/health` remains public. In production, `/docs`, `/redoc`, and `/openapi.json` are disabled.
+All `/v1` read endpoints require either `X-API-Key: <HEALTH_EXPORT_READ_API_KEY>` or a dashboard login session cookie. `/health` remains public. In production, `/docs`, `/redoc`, and `/openapi.json` are disabled.
+
+Excel Power Query should use Data from Web with the feed URL and an `X-API-Key` request header. Do not put API keys in feed URLs.
 
 ## Health Auto Export
 

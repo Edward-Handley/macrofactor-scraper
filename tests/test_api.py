@@ -7,8 +7,8 @@ from macrofactor_scraper.config import Settings, get_settings
 from macrofactor_scraper.health_export import HealthAutoExportService
 
 
-def _client(tmp_path: Path) -> TestClient:
-    settings = Settings(ingest_api_key="secret", sqlite_path=str(tmp_path / "health.sqlite3"))
+def _client(tmp_path: Path, *, read_api_key: str | None = None) -> TestClient:
+    settings = Settings(ingest_api_key="secret", read_api_key=read_api_key, sqlite_path=str(tmp_path / "health.sqlite3"))
     service = HealthAutoExportService(settings.sqlite_path)
     app.dependency_overrides[get_settings] = lambda: settings
     app.dependency_overrides[get_health_export_service] = lambda: service
@@ -78,6 +78,25 @@ def test_ingest_rejects_missing_or_invalid_api_key(tmp_path: Path) -> None:
         assert client.post("/v1/ingest/health-auto-export", json=_payload()).status_code == 401
         response = client.post("/v1/ingest/health-auto-export", json=_payload(), headers={"X-API-Key": "bad"})
         assert response.status_code == 401
+    finally:
+        _clear_overrides()
+
+
+def test_dedicated_read_key_cannot_ingest_and_ingest_key_cannot_read(tmp_path: Path) -> None:
+    client = _client(tmp_path, read_api_key="read-secret")
+    try:
+        ingest = client.post("/v1/ingest/health-auto-export", json=_payload(), headers={"X-API-Key": "secret"})
+        assert ingest.status_code == 200
+
+        read_with_ingest_key = client.get("/v1/metrics", headers={"X-API-Key": "secret"})
+        assert read_with_ingest_key.status_code == 401
+
+        read_with_read_key = client.get("/v1/metrics", headers={"X-API-Key": "read-secret"})
+        assert read_with_read_key.status_code == 200
+        assert read_with_read_key.json()["count"] > 0
+
+        ingest_with_read_key = client.post("/v1/ingest/health-auto-export", json=_payload(), headers={"X-API-Key": "read-secret"})
+        assert ingest_with_read_key.status_code == 401
     finally:
         _clear_overrides()
 
@@ -215,6 +234,32 @@ def test_ingest_status_dashboard_summary_and_exports_require_auth(tmp_path: Path
         metric_csv = client.get("/v1/export/metrics/protein.csv", headers=_auth())
         assert metric_csv.status_code == 200
         assert "metric_name" in metric_csv.text
+    finally:
+        _clear_overrides()
+
+
+def test_excel_csv_feeds_use_stable_headers_and_blank_missing_values(tmp_path: Path) -> None:
+    client = _client(tmp_path, read_api_key="read-secret")
+    try:
+        assert client.post("/v1/ingest/health-auto-export", json=_payload(), headers=_auth()).status_code == 200
+        read_auth = {"X-API-Key": "read-secret"}
+
+        assert client.get("/v1/excel/daily-log.csv?start=2026-05-01&end=2026-05-01").status_code == 401
+        daily = client.get("/v1/excel/daily-log.csv?start=2026-05-01&end=2026-05-01", headers=read_auth)
+        assert daily.status_code == 200
+        lines = daily.text.splitlines()
+        assert lines[0] == "date,calories,protein,carbohydrates,fat,water,weight,steps,active_energy"
+        assert "2026-05-01,2200.0,180.0,240.0,70.0" in lines[1]
+
+        calories_weight = client.get("/v1/excel/calories-weight.csv?start=2026-05-01&end=2026-05-02", headers=read_auth)
+        assert calories_weight.status_code == 200
+        assert calories_weight.text.splitlines()[0] == "date,calories,weight,rolling_calories_7d,weight_delta"
+        assert "2026-05-02,500.0,81.2,1350.0,0.7000000000000028" in calories_weight.text
+
+        metric = client.get("/v1/excel/metrics/dietary_energy.csv?start=2026-05-02&end=2026-05-02", headers=read_auth)
+        assert metric.status_code == 200
+        assert metric.text.splitlines()[0] == "id,metric_name,units,date,timestamp,quantity,source"
+        assert "dietary_energy,kcal,2026-05-02" in metric.text
     finally:
         _clear_overrides()
 
