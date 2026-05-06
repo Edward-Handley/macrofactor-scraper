@@ -86,8 +86,11 @@ Set:
 
 ```dotenv
 DOMAIN=health.example.com
+ENVIRONMENT=production
 HEALTH_EXPORT_API_KEY=paste-the-generated-secret
 HEALTH_EXPORT_SQLITE_PATH=/data/health_export.sqlite3
+SESSION_SECRET=paste-a-second-generated-secret
+DASHBOARD_PASSWORD=paste-a-dashboard-password
 ```
 
 ## 8. Start The App
@@ -102,6 +105,8 @@ Test:
 
 ```bash
 curl https://health.example.com/health
+curl -i https://health.example.com/v1/metrics
+curl -H "X-API-Key: paste-the-generated-secret" https://health.example.com/v1/metrics
 ```
 
 Expected:
@@ -109,6 +114,8 @@ Expected:
 ```json
 {"status":"ok"}
 ```
+
+The unauthenticated `/v1/metrics` request should return `401`. The authenticated request should return metric JSON.
 
 ## 9. Configure Health Auto Export
 
@@ -127,8 +134,51 @@ Start with Health Metrics, then add a second automation for Workouts if desired.
 ## 10. Check Data
 
 ```bash
-curl https://health.example.com/v1/metrics
-curl "https://health.example.com/v1/daily-summary?start=2026-05-01&end=2026-05-05"
+curl -H "X-API-Key: paste-the-generated-secret" https://health.example.com/v1/metrics
+curl -H "X-API-Key: paste-the-generated-secret" "https://health.example.com/v1/daily-summary?start=2026-05-01&end=2026-05-05"
+curl -H "X-API-Key: paste-the-generated-secret" https://health.example.com/v1/ingest/status
+```
+
+Open `https://health.example.com/` in a browser and sign in with `DASHBOARD_PASSWORD`.
+
+## Manual Backfill
+
+If Health Auto Export gives you a JSON file, copy it to the droplet and post it to the ingest endpoint:
+
+```bash
+cd /opt/health-export
+mkdir -p imports
+curl -X POST "https://health.example.com/v1/ingest/health-auto-export" \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: paste-the-generated-secret" \
+  --data-binary @imports/health-export.json
+```
+
+The app deduplicates records, so posting the same export again should not duplicate metric rows.
+
+## Emergency Public Read Block
+
+If you ever deploy a build where private reads are accidentally exposed, temporarily block public reads in `Caddyfile` while leaving ingestion available:
+
+```caddyfile
+{$DOMAIN} {
+    encode gzip
+
+    @blocked_read_paths {
+        method GET
+        path /v1/* /docs* /redoc* /openapi.json
+    }
+
+    respond @blocked_read_paths "Not found" 404
+
+    reverse_proxy api:8000
+}
+```
+
+Then run:
+
+```bash
+docker compose restart caddy
 ```
 
 ## 11. Back Up SQLite

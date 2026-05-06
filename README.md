@@ -9,10 +9,12 @@ This project previously explored direct MacroFactor Firebase reads. The default 
 Implemented:
 
 - `POST /v1/ingest/health-auto-export` with `X-API-Key` authentication.
+- Private API reads with `X-API-Key` authentication or a signed dashboard session cookie.
+- Browser dashboard with login, daily summary cards, metric listing, ingest status, and CSV exports.
 - Generic Health Auto Export JSON metric ingestion for objects shaped like `name`, `units`, and `data`.
 - SQLite storage for raw ingest batches, normalized health metric rows, and workout rows.
-- Metric listing, per-metric date filtering, daily summaries, workouts, and health check routes.
-- Nutrition-friendly daily summaries for common metric names such as `dietary_energy`, `protein`, `carbohydrates`, `total_fat`, `dietary_water`, `body_mass`, `step_count`, and `active_energy`.
+- Metric listing, per-metric date filtering, daily summaries, dashboard summaries, workouts, ingest status, CSV exports, and health check routes.
+- Nutrition-friendly daily summaries with unit normalization for common metric names such as `dietary_energy`, `protein`, `carbohydrates`, `total_fat`, `dietary_water`, `body_mass`, `step_count`, and `active_energy`.
 
 Legacy Firebase modules remain importable under the original module names for reference and tests, but they are not used by the FastAPI app.
 
@@ -32,9 +34,12 @@ Edit `.env`:
 ```dotenv
 HEALTH_EXPORT_API_KEY=change-me-local-secret
 HEALTH_EXPORT_SQLITE_PATH=health_export.sqlite3
+SESSION_SECRET=change-me-session-secret
+DASHBOARD_PASSWORD=change-me-dashboard-password
 ```
 
 `HEALTH_EXPORT_API_KEY` is the shared secret Health Auto Export sends in the `X-API-Key` header.
+`SESSION_SECRET` signs dashboard cookies. `DASHBOARD_PASSWORD` is used for browser login and defaults to `HEALTH_EXPORT_API_KEY` if unset.
 
 ## Run
 
@@ -46,6 +51,7 @@ Open:
 
 - API docs: <http://127.0.0.1:8000/docs>
 - Health check: <http://127.0.0.1:8000/health>
+- Dashboard: <http://127.0.0.1:8000/>
 
 ## Endpoints
 
@@ -54,7 +60,13 @@ Open:
 - `GET /v1/metrics`
 - `GET /v1/metrics/{metric_name}?start=YYYY-MM-DD&end=YYYY-MM-DD`
 - `GET /v1/daily-summary?start=YYYY-MM-DD&end=YYYY-MM-DD`
+- `GET /v1/dashboard/summary?start=YYYY-MM-DD&end=YYYY-MM-DD`
 - `GET /v1/workouts?start=YYYY-MM-DD&end=YYYY-MM-DD`
+- `GET /v1/ingest/status`
+- `GET /v1/export/daily-summary.csv?start=YYYY-MM-DD&end=YYYY-MM-DD`
+- `GET /v1/export/metrics/{metric_name}.csv?start=YYYY-MM-DD&end=YYYY-MM-DD`
+
+All `/v1` read endpoints require either `X-API-Key: <HEALTH_EXPORT_API_KEY>` or a dashboard login session cookie. `/health` remains public. In production, `/docs`, `/redoc`, and `/openapi.json` are disabled.
 
 ## Health Auto Export
 

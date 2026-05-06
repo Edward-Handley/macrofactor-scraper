@@ -12,6 +12,8 @@ from typing import Any
 from macrofactor_scraper.models import (
     DailySummary,
     DailySummaryResponse,
+    DashboardSummaryResponse,
+    IngestStatusResponse,
     IngestResponse,
     MetricListResponse,
     MetricRecord,
@@ -107,7 +109,11 @@ class HealthAutoExportService:
     def daily_summary(self, start: date | None = None, end: date | None = None) -> DailySummaryResponse:
         self._ensure_schema()
         _validate_range(start, end)
-        query = "SELECT metric_name, record_date, quantity FROM health_records WHERE record_date IS NOT NULL AND quantity IS NOT NULL"
+        query = """
+        SELECT metric_name, units, record_date, quantity
+        FROM health_records
+        WHERE record_date IS NOT NULL AND quantity IS NOT NULL
+        """
         params: list[Any] = []
         if start is not None:
             query += " AND record_date >= ?"
@@ -127,16 +133,30 @@ class HealthAutoExportService:
             key = _summary_key(row["metric_name"])
             if key is None:
                 continue
-            if key == "weight":
-                latest_weight[day] = float(row["quantity"])
+            quantity = _summary_quantity(key, row["units"], float(row["quantity"]))
+            if quantity is None:
                 continue
-            summaries.setdefault(day, {})[key] = summaries.setdefault(day, {}).get(key, 0.0) + float(row["quantity"])
+            if key == "weight":
+                latest_weight[day] = quantity
+                continue
+            summaries.setdefault(day, {})[key] = summaries.setdefault(day, {}).get(key, 0.0) + quantity
 
         for day, weight in latest_weight.items():
             summaries.setdefault(day, {})["weight"] = weight
 
         items = [DailySummary(date=day, **values) for day, values in sorted(summaries.items())]
         return DailySummaryResponse(count=len(items), summaries=items)
+
+    def dashboard_summary(self, start: date | None = None, end: date | None = None) -> DashboardSummaryResponse:
+        response = self.daily_summary(start, end)
+        dates = [item.date for item in response.summaries]
+        return DashboardSummaryResponse(
+            count=response.count,
+            first_date=min(dates) if dates else None,
+            last_date=max(dates) if dates else None,
+            latest_date=max(dates) if dates else None,
+            summaries=response.summaries,
+        )
 
     def workouts(self, start: date | None = None, end: date | None = None) -> WorkoutListResponse:
         self._ensure_schema()
@@ -154,6 +174,25 @@ class HealthAutoExportService:
             rows = conn.execute(query, params).fetchall()
         records = [_workout_from_row(row) for row in rows]
         return WorkoutListResponse(count=len(records), workouts=records)
+
+    def ingest_status(self) -> IngestStatusResponse:
+        self._ensure_schema()
+        with self._connect() as conn:
+            batch = conn.execute(
+                "SELECT COUNT(*) AS count, MAX(received_at) AS latest_batch_at FROM ingest_batches"
+            ).fetchone()
+            metrics = conn.execute(
+                "SELECT COUNT(*) AS count, MIN(record_date) AS first_date, MAX(record_date) AS last_date FROM health_records"
+            ).fetchone()
+            workouts = conn.execute("SELECT COUNT(*) AS count FROM workout_records").fetchone()
+        return IngestStatusResponse(
+            latest_batch_at=_parse_datetime(batch["latest_batch_at"]),
+            batch_count=int(batch["count"]),
+            metric_record_count=int(metrics["count"]),
+            workout_record_count=int(workouts["count"]),
+            first_date=_parse_date(metrics["first_date"]),
+            last_date=_parse_date(metrics["last_date"]),
+        )
 
     def close(self) -> None:
         return None
@@ -397,6 +436,21 @@ def _summary_key(metric_name: str) -> str | None:
         "active_energy_burned": "active_energy",
     }
     return aliases.get(normalized)
+
+
+def _summary_quantity(key: str, units: str | None, quantity: float) -> float | None:
+    normalized_units = (units or "").strip().lower().replace("_", " ")
+    if key in {"calories", "active_energy"}:
+        if normalized_units in {"kj", "kilojoule", "kilojoules"}:
+            return quantity / 4.184
+        return quantity
+    if key == "water":
+        if normalized_units in {"l", "liter", "liters", "litre", "litres"}:
+            return quantity * 1000
+        if normalized_units in {"fl oz", "floz", "fluid ounce", "fluid ounces", "oz"}:
+            return quantity * 29.5735295625
+        return quantity
+    return quantity
 
 
 def _safe_headers(headers: dict[str, str]) -> dict[str, str]:

@@ -95,6 +95,23 @@ class DailySummaryResponse(BaseModel):
     summaries: list[DailySummary]
 
 
+class DashboardSummaryResponse(BaseModel):
+    count: int
+    first_date: dt.date | None = None
+    last_date: dt.date | None = None
+    latest_date: dt.date | None = None
+    summaries: list[DailySummary]
+
+
+class IngestStatusResponse(BaseModel):
+    latest_batch_at: dt.datetime | None = None
+    batch_count: int
+    metric_record_count: int
+    workout_record_count: int
+    first_date: dt.date | None = None
+    last_date: dt.date | None = None
+
+
 class WorkoutRecord(BaseModel):
     id: int
     workout_id: str | None = None

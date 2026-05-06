@@ -31,6 +31,18 @@ class Settings(BaseSettings):
             "MACROFACTOR_SQLITE_PATH",
         ),
     )
+    environment: Literal["development", "production"] = Field(
+        default="development",
+        validation_alias=AliasChoices("ENVIRONMENT", "APP_ENV", "MACROFACTOR_ENVIRONMENT"),
+    )
+    session_secret: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("SESSION_SECRET", "MACROFACTOR_SESSION_SECRET"),
+    )
+    dashboard_password: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("DASHBOARD_PASSWORD", "MACROFACTOR_DASHBOARD_PASSWORD"),
+    )
     username: str | None = Field(default=None, validation_alias=AliasChoices("MACROFACTOR_USERNAME"))
     password: str | None = Field(default=None, validation_alias=AliasChoices("MACROFACTOR_PASSWORD"))
     firebase_api_key: str | None = Field(
@@ -64,6 +76,14 @@ class Settings(BaseSettings):
     @property
     def has_credentials(self) -> bool:
         return bool(self.username and self.password and self.firebase_api_key)
+
+    @property
+    def dashboard_secret(self) -> str | None:
+        return self.dashboard_password or self.ingest_api_key
+
+    @property
+    def effective_session_secret(self) -> str | None:
+        return self.session_secret or self.ingest_api_key
 
 
 @lru_cache
