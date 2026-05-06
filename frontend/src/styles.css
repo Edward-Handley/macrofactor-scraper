@@ -574,6 +574,7 @@ main {
 }
 
 .span-4 { grid-column: span 4; }
+.span-3 { grid-column: span 3; }
 .span-5 { grid-column: span 5; }
 .span-6 { grid-column: span 6; }
 .span-7 { grid-column: span 7; }
@@ -625,6 +626,36 @@ main {
   border-color: var(--brand);
   background: var(--brand-soft);
   color: var(--brand-dark);
+}
+
+.scale-control {
+  display: inline-flex;
+  max-width: 100%;
+  overflow: hidden;
+  border: 1px solid #b9c6d2;
+  border-radius: 7px;
+  background: #ffffff;
+}
+
+.scale-control button {
+  min-height: 30px;
+  border-right: 1px solid var(--line-soft);
+  background: #ffffff;
+  color: #405160;
+  cursor: pointer;
+  padding: 0 8px;
+  font-size: 0.76rem;
+  font-weight: 800;
+  text-transform: capitalize;
+}
+
+.scale-control button:last-child {
+  border-right: 0;
+}
+
+.scale-control button.active {
+  background: #17202a;
+  color: #ffffff;
 }
 
 button.small {
@@ -708,6 +739,48 @@ td small {
   gap: 6px;
   flex-wrap: wrap;
   margin-bottom: 12px;
+}
+
+.select-field {
+  display: grid;
+  justify-self: end;
+  gap: 5px;
+  width: min(360px, 100%);
+}
+
+.select-field span {
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 850;
+  text-transform: uppercase;
+}
+
+.select-field select {
+  min-height: 38px;
+  border: 1px solid #b9c6d2;
+  border-radius: 7px;
+  background: #ffffff;
+  color: var(--text);
+  padding: 0 10px;
+  font: inherit;
+}
+
+.source-stat {
+  min-height: 122px;
+}
+
+.source-stat strong {
+  display: block;
+  margin-top: 8px;
+  color: var(--strong);
+  font-size: 2rem;
+  line-height: 1;
+}
+
+.source-stat small {
+  display: block;
+  margin-top: 8px;
+  color: var(--muted);
 }
 
 .source-list {
@@ -991,7 +1064,7 @@ a.small-link {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .hero-panel, .insight-panel, .span-4, .span-5, .span-6, .span-7, .span-8 {
+  .hero-panel, .insight-panel, .span-3, .span-4, .span-5, .span-6, .span-7, .span-8 {
     grid-column: span 12;
   }
 }
@@ -1041,6 +1114,10 @@ a.small-link {
 
   .status-strip, .settings-grid, .control-panel {
     grid-template-columns: 1fr;
+  }
+
+  .select-field {
+    justify-self: stretch;
   }
 
   .chip-row {

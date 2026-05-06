@@ -53,7 +53,8 @@ import {
 import "./styles.css";
 
 type SummaryField = "calories" | "protein" | "carbohydrates" | "fat" | "water" | "weight" | "steps" | "active_energy";
-type TabId = "overview" | "nutrition" | "trends" | "metrics" | "quality" | "settings";
+type TabId = "overview" | "nutrition" | "trends" | "calorie_weight" | "sources" | "metrics" | "quality" | "settings";
+type ScaleMode = "auto" | "zero" | "tight" | "indexed";
 
 type DailySummary = Record<SummaryField, number | null> & {date: string};
 
@@ -116,6 +117,8 @@ const tabs: Array<{id: TabId; label: string; icon: React.ElementType}> = [
   {id: "overview", label: "Overview", icon: Home},
   {id: "nutrition", label: "Nutrition", icon: Utensils},
   {id: "trends", label: "Trends", icon: LineChartIcon},
+  {id: "calorie_weight", label: "Calories vs Weight", icon: Weight},
+  {id: "sources", label: "Sources", icon: Database},
   {id: "metrics", label: "Metrics", icon: Database},
   {id: "quality", label: "Data Quality", icon: ShieldCheck},
   {id: "settings", label: "Settings", icon: SettingsIcon}
@@ -160,6 +163,17 @@ function App() {
   const [status, setStatus] = useState<IngestStatus | null>(null);
   const [search, setSearch] = useState("");
   const [catalogFilter, setCatalogFilter] = useState<"all" | "dashboard" | "untrusted" | "stale">("all");
+  const [selectedSource, setSelectedSource] = useState("");
+  const [chartScales, setChartScales] = useState<Record<SummaryField, ScaleMode>>({
+    calories: "auto",
+    protein: "auto",
+    carbohydrates: "auto",
+    fat: "auto",
+    water: "auto",
+    weight: "tight",
+    steps: "auto",
+    active_energy: "auto"
+  });
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -176,6 +190,8 @@ function App() {
     () => filterCatalog(catalog, search, catalogFilter),
     [catalog, search, catalogFilter]
   );
+  const sourceOptions = useMemo(() => Array.from(new Set(catalog.flatMap((metric) => metric.sources.length ? metric.sources : ["Unknown"]))).sort(), [catalog]);
+  const activeSource = selectedSource || sourceOptions[0] || "Unknown";
 
   async function load(rangeDays?: number) {
     setError("");
@@ -278,7 +294,9 @@ function App() {
           {loading ? <LoadingState /> : null}
           {!loading && activeTab === "overview" && <Overview rows={rows} latest={latest} visibleFields={visibleFields} preferences={preferences} savePreferences={savePreferences} dataHealth={dataHealth} />}
           {!loading && activeTab === "nutrition" && <Nutrition rows={rows} visibleFields={visibleFields} />}
-          {!loading && activeTab === "trends" && <Trends rows={rows} preferences={preferences} savePreferences={savePreferences} />}
+          {!loading && activeTab === "trends" && <Trends rows={rows} preferences={preferences} savePreferences={savePreferences} chartScales={chartScales} setChartScales={setChartScales} />}
+          {!loading && activeTab === "calorie_weight" && <CalorieWeight rows={rows} />}
+          {!loading && activeTab === "sources" && <SourceExplorer metrics={catalog} selectedSource={activeSource} setSelectedSource={setSelectedSource} sourceOptions={sourceOptions} preferences={preferences} savePreferences={savePreferences} />}
           {!loading && activeTab === "metrics" && <Metrics metrics={filteredCatalog} catalog={catalog} search={search} setSearch={setSearch} filter={catalogFilter} setFilter={setCatalogFilter} preferences={preferences} savePreferences={savePreferences} />}
           {!loading && activeTab === "quality" && <DataQuality rows={rows} metrics={catalog} preferences={preferences} savePreferences={savePreferences} snapshot={dataHealth} />}
           {!loading && activeTab === "settings" && preferences ? <Settings preferences={preferences} savePreferences={savePreferences} loadRange={load} metrics={catalog} /> : null}
@@ -416,7 +434,7 @@ function Nutrition({rows, visibleFields}: {rows: DailySummary[]; visibleFields: 
   );
 }
 
-function Trends({rows, preferences, savePreferences}: {rows: DailySummary[]; preferences: Preferences | null; savePreferences: (value: Preferences) => Promise<void>}) {
+function Trends({rows, preferences, savePreferences, chartScales, setChartScales}: {rows: DailySummary[]; preferences: Preferences | null; savePreferences: (value: Preferences) => Promise<void>; chartScales: Record<SummaryField, ScaleMode>; setChartScales: React.Dispatch<React.SetStateAction<Record<SummaryField, ScaleMode>>>}) {
   const fields = preferences?.default_chart_set.length ? preferences.default_chart_set : allFields;
   function toggleChart(field: SummaryField) {
     if (!preferences) return;
@@ -424,6 +442,9 @@ function Trends({rows, preferences, savePreferences}: {rows: DailySummary[]; pre
       ? preferences.default_chart_set.filter((item) => item !== field)
       : [...preferences.default_chart_set, field];
     void savePreferences({...preferences, default_chart_set: next});
+  }
+  function setScale(field: SummaryField, mode: ScaleMode) {
+    setChartScales((current) => ({...current, [field]: mode}));
   }
   return (
     <>
@@ -443,8 +464,18 @@ function Trends({rows, preferences, savePreferences}: {rows: DailySummary[]; pre
       <section className="chart-grid">
         {fields.map((field) => (
           <div className="panel chart-panel" key={field}>
-            <div className="panel-head"><h2>{fieldMeta[field].label}</h2><span className="muted">{fieldMeta[field].unit || "count"}</span></div>
-            <SingleMetricChart rows={rows} field={field} />
+            <div className="panel-head">
+              <div>
+                <h2>{fieldMeta[field].label}</h2>
+                <span className="muted">{scaleDescription(field, chartScales[field])}</span>
+              </div>
+              <div className="scale-control">
+                {(["auto", "zero", "tight", "indexed"] as ScaleMode[]).map((mode) => (
+                  <button key={mode} className={chartScales[field] === mode ? "active" : ""} type="button" onClick={() => setScale(field, mode)}>{mode}</button>
+                ))}
+              </div>
+            </div>
+            <SingleMetricChart rows={rows} field={field} scaleMode={chartScales[field]} />
           </div>
         ))}
       </section>
@@ -522,6 +553,144 @@ function Metrics({metrics, catalog, search, setSearch, filter, setFilter, prefer
             );
           })}</tbody>
         </table>
+      </div>
+    </section>
+  );
+}
+
+function CalorieWeight({rows}: {rows: DailySummary[]}) {
+  const data = useMemo(() => calorieWeightRows(rows), [rows]);
+  const calorieAvg = average(rows, "calories");
+  const weightValues = rows.map((row) => row.weight).filter((value): value is number => typeof value === "number");
+  const weightChange = weightValues.length >= 2 ? weightValues[weightValues.length - 1] - weightValues[0] : null;
+  const correlation = correlationFor(rows, "calories", "weight");
+  const weightDomain = tightDomain(rows, "weight");
+  return (
+    <section className="dashboard-grid">
+      <div className="panel span-4 score-panel">
+        <span className="eyebrow">Calorie average</span>
+        <strong>{fmt(calorieAvg)}</strong>
+        <p>Average daily intake across this selected range.</p>
+      </div>
+      <div className="panel span-4 score-panel">
+        <span className="eyebrow">Weight change</span>
+        <strong>{weightChange === null ? "Missing" : `${weightChange > 0 ? "+" : ""}${weightChange.toFixed(1)} kg`}</strong>
+        <p>First available weight to latest available weight.</p>
+      </div>
+      <div className="panel span-4 score-panel">
+        <span className="eyebrow">Correlation</span>
+        <strong>{correlation === null ? "Missing" : correlation.toFixed(2)}</strong>
+        <p>Same-day calorie and weight relationship. Use trend direction, not causation.</p>
+      </div>
+      <div className="panel span-8">
+        <div className="panel-head">
+          <div><h2>Calories In vs Weight</h2><span className="muted">Calories use bars. Weight uses a tight right-axis scale.</span></div>
+          <span className="badge good">tight weight scale</span>
+        </div>
+        <ResponsiveContainer width="100%" height={380}>
+          <ComposedChart data={data}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#e7edf3" />
+            <XAxis dataKey="date" minTickGap={28} tickLine={false} />
+            <YAxis yAxisId="left" tickLine={false} axisLine={false} />
+            <YAxis yAxisId="right" orientation="right" tickLine={false} axisLine={false} domain={weightDomain as [number, number]} />
+            <Tooltip content={<ChartTooltip />} />
+            <Legend />
+            <Bar yAxisId="left" dataKey="calories" name="Calories" fill={fieldMeta.calories.color} radius={[4, 4, 0, 0]} />
+            <Line yAxisId="right" type="monotone" dataKey="weight" name="Weight" stroke={fieldMeta.weight.color} strokeWidth={3} dot={false} connectNulls />
+            <Line yAxisId="left" type="monotone" dataKey="calories7" name="7d calorie avg" stroke="#17202a" strokeWidth={2} dot={false} connectNulls />
+          </ComposedChart>
+        </ResponsiveContainer>
+      </div>
+      <div className="panel span-4">
+        <div className="panel-head"><h2>Weight Response Notes</h2><Weight size={18} /></div>
+        <List
+          items={calorieWeightInsights(rows, calorieAvg, weightChange, correlation)}
+          empty="Not enough overlapping calorie and weight data yet."
+        />
+      </div>
+      <div className="panel span-12">
+        <div className="panel-head"><h2>Comparison Table</h2><Table2 size={18} /></div>
+        <div className="table-wrap">
+          <table className="dense">
+            <thead><tr><th>Date</th><th>Calories</th><th>7d Calories</th><th>Weight</th><th>Weight Change</th></tr></thead>
+            <tbody>{data.slice().reverse().map((row) => <tr key={row.date}><td>{row.date}</td><td>{fmt(row.calories)}</td><td>{fmt(row.calories7)}</td><td>{fmt(row.weight, 1)}</td><td>{row.weight_delta === null ? "Missing" : `${row.weight_delta > 0 ? "+" : ""}${row.weight_delta.toFixed(1)} kg`}</td></tr>)}</tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function SourceExplorer({metrics, selectedSource, setSelectedSource, sourceOptions, preferences, savePreferences}: {metrics: MetricCatalogItem[]; selectedSource: string; setSelectedSource: (value: string) => void; sourceOptions: string[]; preferences: Preferences | null; savePreferences: (value: Preferences) => Promise<void>}) {
+  const sourceMetrics = metrics.filter((metric) => (metric.sources.length ? metric.sources : ["Unknown"]).includes(selectedSource));
+  const dashboardMetrics = sourceMetrics.filter((metric) => metric.dashboard_field);
+  const stale = sourceMetrics.filter((metric) => metric.last_date && metric.last_date < isoDate(-14));
+  const trusted = sourceMetrics.filter((metric) => !preferences?.untrusted_metric_names.includes(metric.name));
+  const topMetrics = sourceMetrics.slice().sort((a, b) => b.count - a.count).slice(0, 10).map((metric) => ({name: metric.name, count: metric.count}));
+  const coverageData = [
+    {name: "Dashboard", value: dashboardMetrics.length, color: "#0f766e"},
+    {name: "Raw only", value: Math.max(0, sourceMetrics.length - dashboardMetrics.length), color: "#64748b"}
+  ];
+  function toggleTrust(metric: MetricCatalogItem) {
+    if (!preferences) return;
+    const untrusted = new Set(preferences.untrusted_metric_names);
+    if (untrusted.has(metric.name)) untrusted.delete(metric.name);
+    else untrusted.add(metric.name);
+    void savePreferences({...preferences, untrusted_metric_names: [...untrusted]});
+  }
+  return (
+    <section className="dashboard-grid">
+      <div className="control-panel span-12">
+        <div>
+          <span className="eyebrow">Source explorer</span>
+          <h2>Inspect records by source before trusting them on the dashboard</h2>
+        </div>
+        <label className="select-field">
+          <span>Data source</span>
+          <select value={selectedSource} onChange={(event) => setSelectedSource(event.target.value)}>
+            {sourceOptions.map((source) => <option key={source} value={source}>{source}</option>)}
+          </select>
+        </label>
+      </div>
+      <div className="panel span-3 source-stat"><span className="eyebrow">Metrics</span><strong>{sourceMetrics.length}</strong><small>Total metric definitions</small></div>
+      <div className="panel span-3 source-stat"><span className="eyebrow">Rows</span><strong>{compact(sourceMetrics.reduce((total, metric) => total + metric.count, 0))}</strong><small>Cataloged records</small></div>
+      <div className="panel span-3 source-stat"><span className="eyebrow">Trusted</span><strong>{trusted.length}</strong><small>Not marked untrusted</small></div>
+      <div className="panel span-3 source-stat"><span className="eyebrow">Stale</span><strong>{stale.length}</strong><small>Last seen over 14 days ago</small></div>
+      <div className="panel span-8">
+        <div className="panel-head"><h2>Top Metrics from {selectedSource}</h2><BarChart3 size={18} /></div>
+        <ResponsiveContainer width="100%" height={320}>
+          <BarChart data={topMetrics} layout="vertical" margin={{left: 120}}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#e7edf3" />
+            <XAxis type="number" tickLine={false} axisLine={false} />
+            <YAxis type="category" dataKey="name" tickLine={false} axisLine={false} width={140} />
+            <Tooltip />
+            <Bar dataKey="count" fill="#0f766e" radius={[0, 4, 4, 0]} />
+          </BarChart>
+        </ResponsiveContainer>
+      </div>
+      <div className="panel span-4">
+        <div className="panel-head"><h2>Dashboard Mapping</h2><Database size={18} /></div>
+        <ResponsiveContainer width="100%" height={260}>
+          <PieChart>
+            <Pie data={coverageData} dataKey="value" nameKey="name" innerRadius={58} outerRadius={96} paddingAngle={4}>
+              {coverageData.map((entry) => <Cell key={entry.name} fill={entry.color} />)}
+            </Pie>
+            <Tooltip />
+            <Legend />
+          </PieChart>
+        </ResponsiveContainer>
+      </div>
+      <div className="panel span-12">
+        <div className="panel-head"><h2>{selectedSource} Metric Detail</h2><span className="muted">{sourceMetrics.length} metrics</span></div>
+        <div className="table-wrap">
+          <table className="dense">
+            <thead><tr><th>Metric</th><th>Rows</th><th>Coverage</th><th>Dashboard Field</th><th>Trust</th><th>Export</th></tr></thead>
+            <tbody>{sourceMetrics.map((metric) => {
+              const untrusted = preferences?.untrusted_metric_names.includes(metric.name);
+              return <tr key={`${metric.name}:${metric.units || ""}`}><td><strong>{metric.name}</strong><small>{metric.units || "unitless"}</small></td><td>{fmt(metric.count)}</td><td>{metric.first_date || ""}<span className="muted"> to </span>{metric.last_date || ""}</td><td>{metric.dashboard_field ? fieldMeta[metric.dashboard_field].label : <span className="muted">Raw only</span>}</td><td><button className={untrusted ? "small" : "small active"} type="button" onClick={() => toggleTrust(metric)}>{untrusted ? "Trust" : "Trusted"}</button></td><td><a className="small-link" href={`/v1/export/metrics/${metric.name}.csv`}>CSV</a></td></tr>;
+            })}</tbody>
+          </table>
+        </div>
       </div>
     </section>
   );
@@ -639,11 +808,14 @@ function MultiMetricChart({rows, fields}: {rows: DailySummary[]; fields: Summary
   );
 }
 
-function SingleMetricChart({rows, field}: {rows: DailySummary[]; field: SummaryField}) {
+function SingleMetricChart({rows, field, scaleMode}: {rows: DailySummary[]; field: SummaryField; scaleMode: ScaleMode}) {
   const meta = fieldMeta[field];
+  const data = scaleMode === "indexed" ? indexedRows(rows, field) : rows;
+  const dataKey = scaleMode === "indexed" ? `${field}_indexed` : field;
+  const domain = scaleMode === "zero" ? [0, "auto"] : scaleMode === "tight" ? tightDomain(rows, field) : ["auto", "auto"];
   return (
     <ResponsiveContainer width="100%" height={260}>
-      <AreaChart data={rows}>
+      <AreaChart data={data}>
         <defs>
           <linearGradient id={`fill-${field}`} x1="0" x2="0" y1="0" y2="1">
             <stop offset="5%" stopColor={meta.color} stopOpacity={0.28} />
@@ -652,9 +824,9 @@ function SingleMetricChart({rows, field}: {rows: DailySummary[]; field: SummaryF
         </defs>
         <CartesianGrid strokeDasharray="3 3" stroke="#e7edf3" />
         <XAxis dataKey="date" minTickGap={30} tickLine={false} />
-        <YAxis tickLine={false} axisLine={false} />
+        <YAxis tickLine={false} axisLine={false} domain={domain as [number | string, number | string]} />
         <Tooltip content={<ChartTooltip />} />
-        <Area type="monotone" dataKey={field} name={meta.label} stroke={meta.color} fill={`url(#fill-${field})`} strokeWidth={2} connectNulls />
+        <Area type="monotone" dataKey={dataKey} name={scaleMode === "indexed" ? `${meta.label} index` : meta.label} stroke={meta.color} fill={`url(#fill-${field})`} strokeWidth={2} connectNulls />
       </AreaChart>
     </ResponsiveContainer>
   );
@@ -730,6 +902,8 @@ function headline(tab: TabId): string {
     overview: "Daily nutrition and activity control room",
     nutrition: "Macro adherence and calorie flow",
     trends: "Configurable metric trend board",
+    calorie_weight: "Calories in versus weight change",
+    sources: "Source-level data explorer",
     metrics: "Metric catalog and source controls",
     quality: "Data reliability and freshness",
     settings: "Dashboard preferences"
@@ -740,6 +914,8 @@ function headline(tab: TabId): string {
 function subhead(tab: TabId, rangeDays: number, loadedDays: number): string {
   if (tab === "metrics") return "Search, trust, filter, export, and map raw Health Auto Export metrics.";
   if (tab === "quality") return "Find stale, missing, suspicious, or hidden fields before they affect decisions.";
+  if (tab === "sources") return "Choose an Apple Health or MacroFactor source and inspect coverage, trust, freshness, and exports.";
+  if (tab === "calorie_weight") return "Compare calorie intake with weight movement using a tight weight axis and rolling calorie averages.";
   return `${loadedDays} loaded days across the selected ${rangeDays} day window.`;
 }
 
@@ -785,6 +961,77 @@ function suspiciousValues(rows: DailySummary[]) {
     if ((row.weight || 0) > 250) issues.push(`${row.date}: weight above 250 kg`);
   });
   return issues;
+}
+
+function scaleDescription(field: SummaryField, mode: ScaleMode) {
+  if (mode === "tight") return `Tight scale around the observed ${fieldMeta[field].unit || "value"} range.`;
+  if (mode === "zero") return "Zero baseline for absolute magnitude.";
+  if (mode === "indexed") return "Indexed to first visible value so small changes stand out.";
+  return "Automatic chart scale.";
+}
+
+function tightDomain(rows: DailySummary[], field: SummaryField): [number, number] {
+  const values = rows.map((row) => row[field]).filter((value): value is number => typeof value === "number");
+  if (!values.length) return [0, 1];
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  if (min === max) {
+    const padding = Math.max(1, Math.abs(min) * 0.02);
+    return [roundDomain(min - padding), roundDomain(max + padding)];
+  }
+  const padding = (max - min) * 0.18;
+  return [roundDomain(min - padding), roundDomain(max + padding)];
+}
+
+function roundDomain(value: number) {
+  return Math.round(value * 10) / 10;
+}
+
+function indexedRows(rows: DailySummary[], field: SummaryField) {
+  const first = rows.find((row) => typeof row[field] === "number")?.[field];
+  return rows.map((row) => ({
+    ...row,
+    [`${field}_indexed`]: typeof row[field] === "number" && typeof first === "number" && first !== 0 ? ((row[field] as number) / first) * 100 : null
+  }));
+}
+
+function calorieWeightRows(rows: DailySummary[]) {
+  let firstWeight: number | null = null;
+  return rows.map((row, index) => {
+    if (firstWeight === null && typeof row.weight === "number") firstWeight = row.weight;
+    const trailing = rows.slice(Math.max(0, index - 6), index + 1);
+    return {
+      date: row.date,
+      calories: row.calories,
+      calories7: average(trailing, "calories"),
+      weight: row.weight,
+      weight_delta: typeof row.weight === "number" && firstWeight !== null ? row.weight - firstWeight : null
+    };
+  });
+}
+
+function calorieWeightInsights(rows: DailySummary[], calorieAvg: number | null, weightChange: number | null, correlation: number | null) {
+  const items: string[] = [];
+  if (calorieAvg !== null) items.push(`Average intake is ${fmt(calorieAvg)} kcal/day in this range.`);
+  if (weightChange !== null) items.push(`Weight moved ${weightChange > 0 ? "up" : weightChange < 0 ? "down" : "flat"} by ${Math.abs(weightChange).toFixed(1)} kg.`);
+  if (correlation !== null) items.push(`Same-day calorie/weight correlation is ${correlation.toFixed(2)}. Expect lag, water, sodium, and gut-content noise.`);
+  const missingWeight = rows.filter((row) => row.weight === null || row.weight === undefined).length;
+  if (missingWeight) items.push(`${missingWeight} selected days have no dashboard weight value.`);
+  return items;
+}
+
+function correlationFor(rows: DailySummary[], a: SummaryField, b: SummaryField): number | null {
+  const pairs = rows
+    .filter((row) => typeof row[a] === "number" && typeof row[b] === "number")
+    .map((row) => [row[a] as number, row[b] as number]);
+  if (pairs.length < 3) return null;
+  const avgA = pairs.reduce((total, pair) => total + pair[0], 0) / pairs.length;
+  const avgB = pairs.reduce((total, pair) => total + pair[1], 0) / pairs.length;
+  const numerator = pairs.reduce((total, pair) => total + (pair[0] - avgA) * (pair[1] - avgB), 0);
+  const denomA = Math.sqrt(pairs.reduce((total, pair) => total + (pair[0] - avgA) ** 2, 0));
+  const denomB = Math.sqrt(pairs.reduce((total, pair) => total + (pair[1] - avgB) ** 2, 0));
+  if (!denomA || !denomB) return null;
+  return numerator / (denomA * denomB);
 }
 
 function average(rows: DailySummary[], field: SummaryField): number | null {
