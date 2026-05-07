@@ -177,6 +177,127 @@ def test_daily_summary_for_common_nutrition_and_activity_metrics(tmp_path: Path)
         _clear_overrides()
 
 
+def test_daily_summary_uses_latest_macrofactor_nutrition_total(tmp_path: Path) -> None:
+    client = _client(tmp_path)
+    try:
+        first = {
+            "data": {
+                "metrics": [
+                    {
+                        "name": "dietary_energy",
+                        "units": "kcal",
+                        "data": [{"qty": 1200, "date": "2026-05-06", "source": "MacroFactor", "export_id": "morning"}],
+                    },
+                    {
+                        "name": "protein",
+                        "units": "g",
+                        "data": [{"qty": 90, "date": "2026-05-06", "source": "MacroFactor", "export_id": "morning"}],
+                    },
+                ]
+            }
+        }
+        second = {
+            "data": {
+                "metrics": [
+                    {
+                        "name": "dietary_energy",
+                        "units": "kcal",
+                        "data": [{"qty": 2300, "date": "2026-05-06", "source": "MacroFactor", "export_id": "night"}],
+                    },
+                    {
+                        "name": "protein",
+                        "units": "g",
+                        "data": [{"qty": 165, "date": "2026-05-06", "source": "MacroFactor", "export_id": "night"}],
+                    },
+                ]
+            }
+        }
+
+        assert client.post("/v1/ingest/health-auto-export", json=first, headers=_auth()).status_code == 200
+        assert client.post("/v1/ingest/health-auto-export", json=second, headers=_auth()).status_code == 200
+
+        response = client.get("/v1/daily-summary?start=2026-05-06&end=2026-05-06", headers=_auth())
+        assert response.status_code == 200
+        summary = response.json()["summaries"][0]
+        assert summary["calories"] == 2300
+        assert summary["protein"] == 165
+
+        records = client.get("/v1/metrics/dietary_energy?start=2026-05-06&end=2026-05-06", headers=_auth())
+        assert records.status_code == 200
+        assert records.json()["count"] == 2
+    finally:
+        _clear_overrides()
+
+
+def test_ingest_deduplicates_logical_metric_when_raw_metadata_changes(tmp_path: Path) -> None:
+    client = _client(tmp_path)
+    try:
+        first = {
+            "data": {
+                "metrics": [
+                    {
+                        "name": "dietary_energy",
+                        "units": "kcal",
+                        "data": [{"qty": 2200, "date": "2026-05-06", "source": "MacroFactor", "export_id": "a"}],
+                    }
+                ]
+            }
+        }
+        second = {
+            "data": {
+                "metrics": [
+                    {
+                        "name": "dietary_energy",
+                        "units": "kcal",
+                        "data": [{"qty": 2200, "date": "2026-05-06", "source": "MacroFactor", "export_id": "b"}],
+                    }
+                ]
+            }
+        }
+
+        assert client.post("/v1/ingest/health-auto-export", json=first, headers=_auth()).json()["metrics_inserted"] == 1
+        duplicate = client.post("/v1/ingest/health-auto-export", json=second, headers=_auth())
+        assert duplicate.status_code == 200
+        assert duplicate.json()["metrics_inserted"] == 0
+    finally:
+        _clear_overrides()
+
+
+def test_metric_date_diagnostics_reports_replacement_duplicates(tmp_path: Path) -> None:
+    client = _client(tmp_path)
+    try:
+        payload = {
+            "data": {
+                "metrics": [
+                    {
+                        "name": "dietary_energy",
+                        "units": "kcal",
+                        "data": [
+                            {"qty": 1200, "date": "2026-05-06", "source": "MacroFactor"},
+                            {"qty": 2300, "date": "2026-05-06T22:00:00+08:00", "source": "MacroFactor"},
+                        ],
+                    },
+                    {"name": "step_count", "units": "count", "data": [{"qty": 1000, "date": "2026-05-06"}]},
+                ]
+            }
+        }
+        assert client.post("/v1/ingest/health-auto-export", json=payload, headers=_auth()).status_code == 200
+
+        assert client.get("/v1/diagnostics/metrics/2026-05-06").status_code == 401
+        response = client.get("/v1/diagnostics/metrics/2026-05-06", headers=_auth())
+        assert response.status_code == 200
+        diagnostics = {item["metric_name"]: item for item in response.json()["diagnostics"]}
+        assert diagnostics["dietary_energy"]["aggregation"] == "replacement"
+        assert diagnostics["dietary_energy"]["row_count"] == 2
+        assert diagnostics["dietary_energy"]["summed_value"] == 3500
+        assert diagnostics["dietary_energy"]["replacement_value"] == 2300
+        assert diagnostics["dietary_energy"]["suspicious"] is True
+        assert diagnostics["step_count"]["aggregation"] == "additive"
+        assert diagnostics["step_count"]["suspicious"] is False
+    finally:
+        _clear_overrides()
+
+
 def test_workouts_and_invalid_range(tmp_path: Path) -> None:
     client = _client(tmp_path)
     try:

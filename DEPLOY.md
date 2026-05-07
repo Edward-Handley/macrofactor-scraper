@@ -142,6 +142,7 @@ curl -H "X-API-Key: paste-a-read-only-secret" https://health.example.com/v1/metr
 curl -H "X-API-Key: paste-a-read-only-secret" "https://health.example.com/v1/daily-summary?start=2026-05-01&end=2026-05-05"
 curl -H "X-API-Key: paste-a-read-only-secret" https://health.example.com/v1/ingest/status
 curl -H "X-API-Key: paste-a-read-only-secret" https://health.example.com/v1/dashboard/metric-catalog
+curl -H "X-API-Key: paste-a-read-only-secret" https://health.example.com/v1/diagnostics/metrics/2026-05-06
 curl -H "X-API-Key: paste-a-read-only-secret" "https://health.example.com/v1/excel/daily-log.csv?start=2026-05-01&end=2026-05-05"
 ```
 

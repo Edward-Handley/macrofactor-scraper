@@ -133,6 +133,28 @@ class DashboardMetricCatalogResponse(BaseModel):
     metrics: list[DashboardMetricCatalogItem]
 
 
+class MetricDateDiagnosticItem(BaseModel):
+    metric_name: str
+    units: str | None = None
+    source: str | None = None
+    dashboard_field: str | None = None
+    aggregation: str
+    row_count: int
+    summed_value: float | None = None
+    replacement_value: float | None = None
+    first_record_id: int
+    latest_record_id: int
+    first_timestamp: dt.datetime | None = None
+    latest_timestamp: dt.datetime | None = None
+    suspicious: bool = False
+
+
+class MetricDateDiagnosticResponse(BaseModel):
+    date: dt.date
+    count: int
+    diagnostics: list[MetricDateDiagnosticItem]
+
+
 class IngestStatusResponse(BaseModel):
     latest_batch_at: dt.datetime | None = None
     batch_count: int

@@ -26,6 +26,7 @@ from macrofactor_scraper.models import (
     HealthResponse,
     IngestStatusResponse,
     IngestResponse,
+    MetricDateDiagnosticResponse,
     MetricListResponse,
     MetricRecordsResponse,
     WorkoutListResponse,
@@ -237,6 +238,14 @@ async def update_dashboard_preferences(
 @app.get("/v1/dashboard/metric-catalog", response_model=DashboardMetricCatalogResponse, dependencies=[Depends(require_private_access)])
 async def dashboard_metric_catalog(service: HealthAutoExportService = Depends(get_health_export_service)) -> DashboardMetricCatalogResponse:
     return service.dashboard_metric_catalog()
+
+
+@app.get("/v1/diagnostics/metrics/{target_date}", response_model=MetricDateDiagnosticResponse, dependencies=[Depends(require_private_access)])
+async def metric_date_diagnostics(
+    target_date: date,
+    service: HealthAutoExportService = Depends(get_health_export_service),
+) -> MetricDateDiagnosticResponse:
+    return service.metric_date_diagnostics(target_date)
 
 
 @app.get("/v1/workouts", response_model=WorkoutListResponse, dependencies=[Depends(require_private_access)])

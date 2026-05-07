@@ -86,6 +86,7 @@ npm run build
 - `GET /v1/dashboard/preferences`
 - `PUT /v1/dashboard/preferences`
 - `GET /v1/dashboard/metric-catalog`
+- `GET /v1/diagnostics/metrics/{YYYY-MM-DD}`
 - `GET /v1/workouts?start=YYYY-MM-DD&end=YYYY-MM-DD`
 - `GET /v1/ingest/status`
 - `GET /v1/export/daily-summary.csv?start=YYYY-MM-DD&end=YYYY-MM-DD`
@@ -109,8 +110,11 @@ Configure Health Auto Export:
 - URL: your local or tunneled `/v1/ingest/health-auto-export` endpoint.
 - Header: `X-API-Key: <HEALTH_EXPORT_API_KEY>`.
 - Date range: use "Since Last Sync" for ongoing sync and Manual Export for history.
+- Cadence: run nutrition exports after MacroFactor has finished writing the prior day, such as daily at about 3:00 AM local phone time. If you want same-day updates, use a moderate cadence such as every 2-4 hours.
 
 For iPhone testing, run the API locally on `127.0.0.1:8000` and expose it temporarily with a tunnel such as Cloudflare Tunnel or ngrok. iOS background exports can be delayed when the phone is locked, Background App Refresh is unavailable, or Low Power Mode is enabled.
+
+Nutrition summary fields from MacroFactor are treated as daily replacement totals. Repeated same-day exports update the displayed daily total instead of stacking into inflated calories or macros. To inspect a suspicious day, call `/v1/diagnostics/metrics/YYYY-MM-DD` with the read API key and compare the summed value with the replacement value.
 
 ## Storage
 

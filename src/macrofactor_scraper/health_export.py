@@ -18,6 +18,8 @@ from macrofactor_scraper.models import (
     DashboardSummaryResponse,
     IngestStatusResponse,
     IngestResponse,
+    MetricDateDiagnosticItem,
+    MetricDateDiagnosticResponse,
     MetricListResponse,
     MetricRecord,
     MetricRecordsResponse,
@@ -28,6 +30,7 @@ from macrofactor_scraper.models import (
 
 
 SUMMARY_FIELDS = ("calories", "protein", "carbohydrates", "fat", "water", "weight", "steps", "active_energy")
+REPLACEMENT_SUMMARY_KEYS = {"calories", "protein", "carbohydrates", "fat", "water", "weight"}
 
 
 @dataclass(frozen=True)
@@ -242,6 +245,54 @@ class HealthAutoExportService:
         ]
         return DashboardMetricCatalogResponse(count=len(metrics), metrics=metrics)
 
+    def metric_date_diagnostics(self, target_date: date) -> MetricDateDiagnosticResponse:
+        self._ensure_schema()
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT id, metric_name, units, record_date, timestamp, quantity, source
+                FROM health_records
+                WHERE record_date = ? AND quantity IS NOT NULL
+                ORDER BY metric_name, units, source, timestamp, id
+                """,
+                (target_date.isoformat(),),
+            ).fetchall()
+
+        groups: dict[tuple[str, str | None, str | None], list[sqlite3.Row]] = {}
+        for row in rows:
+            groups.setdefault((row["metric_name"], row["units"], row["source"]), []).append(row)
+
+        diagnostics: list[MetricDateDiagnosticItem] = []
+        for (metric_name, units, source), group_rows in sorted(groups.items(), key=lambda item: (item[0][0], item[0][1] or "", item[0][2] or "")):
+            key = _summary_key(metric_name)
+            aggregation = _summary_aggregation(key)
+            values = [_summary_quantity(key, row["units"], float(row["quantity"])) if key else float(row["quantity"]) for row in group_rows]
+            numeric_values = [value for value in values if value is not None]
+            latest_row = _latest_metric_row(group_rows)
+            replacement_value = (
+                _summary_quantity(key, latest_row["units"], float(latest_row["quantity"])) if key and latest_row["quantity"] is not None else latest_row["quantity"]
+            )
+            summed_value = sum(numeric_values) if numeric_values else None
+            suspicious = aggregation == "replacement" and len(group_rows) > 1 and summed_value != replacement_value
+            diagnostics.append(
+                MetricDateDiagnosticItem(
+                    metric_name=metric_name,
+                    units=units,
+                    source=source,
+                    dashboard_field=key,
+                    aggregation=aggregation,
+                    row_count=len(group_rows),
+                    summed_value=summed_value,
+                    replacement_value=replacement_value,
+                    first_record_id=int(group_rows[0]["id"]),
+                    latest_record_id=int(latest_row["id"]),
+                    first_timestamp=_parse_datetime(group_rows[0]["timestamp"]),
+                    latest_timestamp=_parse_datetime(latest_row["timestamp"]),
+                    suspicious=suspicious,
+                )
+            )
+        return MetricDateDiagnosticResponse(date=target_date, count=len(diagnostics), diagnostics=diagnostics)
+
     def _daily_summary_items(
         self,
         start: date | None = None,
@@ -251,7 +302,7 @@ class HealthAutoExportService:
         include_hidden: bool = True,
     ) -> list[DailySummary]:
         query = """
-        SELECT metric_name, units, record_date, quantity, source
+        SELECT id, metric_name, units, record_date, timestamp, quantity, source
         FROM health_records
         WHERE record_date IS NOT NULL AND quantity IS NOT NULL
         """
@@ -265,8 +316,8 @@ class HealthAutoExportService:
         with self._connect() as conn:
             rows = conn.execute(query, params).fetchall()
 
-        summaries: dict[date, dict[str, float]] = {}
-        latest_weight: dict[date, float] = {}
+        additive_totals: dict[date, dict[str, float]] = {}
+        replacement_rows: dict[tuple[date, str, str, str | None], sqlite3.Row] = {}
         hidden_fields = set() if include_hidden else set(_effective_hidden_fields(preferences))
         untrusted_metric_names = set(preferences.untrusted_metric_names) if preferences is not None else set()
         trusted_metric_names = set(preferences.trusted_metric_names) if preferences is not None else set()
@@ -289,13 +340,32 @@ class HealthAutoExportService:
             quantity = _summary_quantity(key, row["units"], float(row["quantity"]))
             if quantity is None:
                 continue
+            if _summary_aggregation(key) == "replacement":
+                source = row["source"] or ""
+                replacement_key = (day, key, metric_name, source)
+                current = replacement_rows.get(replacement_key)
+                if current is None or _metric_row_sort_key(row) > _metric_row_sort_key(current):
+                    replacement_rows[replacement_key] = row
+                continue
+            additive_totals.setdefault(day, {})[key] = additive_totals.setdefault(day, {}).get(key, 0.0) + quantity
+
+        summaries: dict[date, dict[str, float]] = {day: values.copy() for day, values in additive_totals.items()}
+        latest_weight_rows: dict[date, sqlite3.Row] = {}
+        for (day, key, _metric_name, _source), row in replacement_rows.items():
+            quantity = _summary_quantity(key, row["units"], float(row["quantity"]))
+            if quantity is None:
+                continue
             if key == "weight":
-                latest_weight[day] = quantity
+                current = latest_weight_rows.get(day)
+                if current is None or _metric_row_sort_key(row) > _metric_row_sort_key(current):
+                    latest_weight_rows[day] = row
                 continue
             summaries.setdefault(day, {})[key] = summaries.setdefault(day, {}).get(key, 0.0) + quantity
 
-        for day, weight in latest_weight.items():
-            summaries.setdefault(day, {})["weight"] = weight
+        for day, row in latest_weight_rows.items():
+            quantity = _summary_quantity("weight", row["units"], float(row["quantity"]))
+            if quantity is not None:
+                summaries.setdefault(day, {})["weight"] = quantity
 
         items = [DailySummary(date=day, **values) for day, values in sorted(summaries.items())]
         return items
@@ -407,11 +477,25 @@ class HealthAutoExportService:
         fingerprint = _fingerprint(
             "metric",
             metric.name,
+            metric.units,
+            metric.record_date.isoformat() if metric.record_date else None,
+            metric.timestamp.isoformat() if metric.timestamp else None,
+            metric.quantity,
+            metric.source,
+        )
+        legacy_fingerprint = _fingerprint(
+            "metric",
+            metric.name,
             metric.record_date.isoformat() if metric.record_date else None,
             metric.timestamp.isoformat() if metric.timestamp else None,
             metric.quantity,
             metric.raw,
         )
+        if conn.execute(
+            "SELECT 1 FROM health_records WHERE fingerprint IN (?, ?) LIMIT 1",
+            (fingerprint, legacy_fingerprint),
+        ).fetchone():
+            return 0
         cursor = conn.execute(
             """
             INSERT OR IGNORE INTO health_records
@@ -586,6 +670,12 @@ def _summary_key(metric_name: str) -> str | None:
     return aliases.get(normalized)
 
 
+def _summary_aggregation(key: str | None) -> str:
+    if key in REPLACEMENT_SUMMARY_KEYS:
+        return "replacement"
+    return "additive"
+
+
 def _summary_quantity(key: str, units: str | None, quantity: float) -> float | None:
     normalized_units = (units or "").strip().lower().replace("_", " ")
     if key in {"calories", "active_energy"}:
@@ -599,6 +689,14 @@ def _summary_quantity(key: str, units: str | None, quantity: float) -> float | N
             return quantity * 29.5735295625
         return quantity
     return quantity
+
+
+def _metric_row_sort_key(row: sqlite3.Row) -> tuple[str, int]:
+    return (row["timestamp"] or "", int(row["id"]))
+
+
+def _latest_metric_row(rows: list[sqlite3.Row]) -> sqlite3.Row:
+    return max(rows, key=_metric_row_sort_key)
 
 
 def _normalize_preferences(preferences: DashboardPreferences) -> DashboardPreferences:
