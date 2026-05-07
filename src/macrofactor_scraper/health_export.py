@@ -30,7 +30,7 @@ from macrofactor_scraper.models import (
 
 
 SUMMARY_FIELDS = ("calories", "protein", "carbohydrates", "fat", "water", "weight", "steps", "active_energy")
-REPLACEMENT_SUMMARY_KEYS = {"calories", "protein", "carbohydrates", "fat", "water", "weight"}
+REPLACEMENT_SUMMARY_KEYS = {"weight"}
 
 
 @dataclass(frozen=True)
@@ -322,6 +322,7 @@ class HealthAutoExportService:
         untrusted_metric_names = set(preferences.untrusted_metric_names) if preferences is not None else set()
         trusted_metric_names = set(preferences.trusted_metric_names) if preferences is not None else set()
         source_filters = preferences.source_filters if preferences is not None else {}
+        seen_records: set[tuple[str, str | None, str | None, str | None, str | None, float]] = set()
         for row in rows:
             day = _parse_date(row["record_date"])
             if day is None:
@@ -340,6 +341,17 @@ class HealthAutoExportService:
             quantity = _summary_quantity(key, row["units"], float(row["quantity"]))
             if quantity is None:
                 continue
+            logical_record = (
+                metric_name,
+                row["units"],
+                row["record_date"],
+                row["timestamp"],
+                row["source"],
+                float(row["quantity"]),
+            )
+            if logical_record in seen_records:
+                continue
+            seen_records.add(logical_record)
             if _summary_aggregation(key) == "replacement":
                 source = row["source"] or ""
                 replacement_key = (day, key, metric_name, source)

@@ -114,7 +114,7 @@ Configure Health Auto Export:
 
 For iPhone testing, run the API locally on `127.0.0.1:8000` and expose it temporarily with a tunnel such as Cloudflare Tunnel or ngrok. iOS background exports can be delayed when the phone is locked, Background App Refresh is unavailable, or Low Power Mode is enabled.
 
-Nutrition summary fields from MacroFactor are treated as daily replacement totals. Repeated same-day exports update the displayed daily total instead of stacking into inflated calories or macros. To inspect a suspicious day, call `/v1/diagnostics/metrics/YYYY-MM-DD` with the read API key and compare the summed value with the replacement value.
+Nutrition summary fields from MacroFactor are summed from unique same-day data points. Repeated exports with the same logical record are deduplicated, while new same-day calorie and macro points are added to the daily total. To inspect a suspicious day, call `/v1/diagnostics/metrics/YYYY-MM-DD` with the read API key and compare row counts, summed values, and source details.
 
 ## Storage
 

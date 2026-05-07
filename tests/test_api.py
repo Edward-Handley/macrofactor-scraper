@@ -177,7 +177,7 @@ def test_daily_summary_for_common_nutrition_and_activity_metrics(tmp_path: Path)
         _clear_overrides()
 
 
-def test_daily_summary_uses_latest_macrofactor_nutrition_total(tmp_path: Path) -> None:
+def test_daily_summary_adds_unique_macrofactor_nutrition_points(tmp_path: Path) -> None:
     client = _client(tmp_path)
     try:
         first = {
@@ -219,8 +219,8 @@ def test_daily_summary_uses_latest_macrofactor_nutrition_total(tmp_path: Path) -
         response = client.get("/v1/daily-summary?start=2026-05-06&end=2026-05-06", headers=_auth())
         assert response.status_code == 200
         summary = response.json()["summaries"][0]
-        assert summary["calories"] == 2300
-        assert summary["protein"] == 165
+        assert summary["calories"] == 3500
+        assert summary["protein"] == 255
 
         records = client.get("/v1/metrics/dietary_energy?start=2026-05-06&end=2026-05-06", headers=_auth())
         assert records.status_code == 200
@@ -263,7 +263,50 @@ def test_ingest_deduplicates_logical_metric_when_raw_metadata_changes(tmp_path: 
         _clear_overrides()
 
 
-def test_metric_date_diagnostics_reports_replacement_duplicates(tmp_path: Path) -> None:
+def test_daily_summary_ignores_existing_logical_duplicate_rows(tmp_path: Path) -> None:
+    client = _client(tmp_path)
+    try:
+        payload = {
+            "data": {
+                "metrics": [
+                    {
+                        "name": "dietary_energy",
+                        "units": "kcal",
+                        "data": [{"qty": 1200, "date": "2026-05-06T08:00:00+08:00", "source": "MacroFactor"}],
+                    },
+                ]
+            }
+        }
+        assert client.post("/v1/ingest/health-auto-export", json=payload, headers=_auth()).status_code == 200
+        service = app.dependency_overrides[get_health_export_service]()
+        with service._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO health_records
+                    (batch_id, metric_name, units, record_date, timestamp, quantity, source, raw_json, fingerprint)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    1,
+                    "dietary_energy",
+                    "kcal",
+                    "2026-05-06",
+                    "2026-05-06T08:00:00+08:00",
+                    1200,
+                    "MacroFactor",
+                    '{"export_id":"legacy-duplicate"}',
+                    "legacy-duplicate-fingerprint",
+                ),
+            )
+
+        response = client.get("/v1/daily-summary?start=2026-05-06&end=2026-05-06", headers=_auth())
+        assert response.status_code == 200
+        assert response.json()["summaries"][0]["calories"] == 1200
+    finally:
+        _clear_overrides()
+
+
+def test_metric_date_diagnostics_reports_additive_nutrition_points(tmp_path: Path) -> None:
     client = _client(tmp_path)
     try:
         payload = {
@@ -277,7 +320,7 @@ def test_metric_date_diagnostics_reports_replacement_duplicates(tmp_path: Path) 
                             {"qty": 2300, "date": "2026-05-06T22:00:00+08:00", "source": "MacroFactor"},
                         ],
                     },
-                    {"name": "step_count", "units": "count", "data": [{"qty": 1000, "date": "2026-05-06"}]},
+                    {"name": "body_mass", "units": "kg", "data": [{"qty": 93.1, "date": "2026-05-06"}]},
                 ]
             }
         }
@@ -287,13 +330,12 @@ def test_metric_date_diagnostics_reports_replacement_duplicates(tmp_path: Path) 
         response = client.get("/v1/diagnostics/metrics/2026-05-06", headers=_auth())
         assert response.status_code == 200
         diagnostics = {item["metric_name"]: item for item in response.json()["diagnostics"]}
-        assert diagnostics["dietary_energy"]["aggregation"] == "replacement"
+        assert diagnostics["dietary_energy"]["aggregation"] == "additive"
         assert diagnostics["dietary_energy"]["row_count"] == 2
         assert diagnostics["dietary_energy"]["summed_value"] == 3500
         assert diagnostics["dietary_energy"]["replacement_value"] == 2300
-        assert diagnostics["dietary_energy"]["suspicious"] is True
-        assert diagnostics["step_count"]["aggregation"] == "additive"
-        assert diagnostics["step_count"]["suspicious"] is False
+        assert diagnostics["dietary_energy"]["suspicious"] is False
+        assert diagnostics["body_mass"]["aggregation"] == "replacement"
     finally:
         _clear_overrides()
 
