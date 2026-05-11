@@ -69,6 +69,14 @@ export function useStrongSummary(start: string, end: string) {
   });
 }
 
+export function useStrongAnalytics(start: string, end: string) {
+  return useQuery({
+    queryKey: ["strong-analytics", start, end],
+    queryFn: () => api.strong.analytics(start, end),
+    staleTime: 60_000,
+  });
+}
+
 export function useStrongSessions(start: string, end: string) {
   return useQuery({
     queryKey: ["strong-sessions", start, end],
@@ -93,6 +101,7 @@ export function useImportStrongCsv() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["strong-imports"] });
       qc.invalidateQueries({ queryKey: ["strong-summary"] });
+      qc.invalidateQueries({ queryKey: ["strong-analytics"] });
       qc.invalidateQueries({ queryKey: ["strong-sessions"] });
       qc.invalidateQueries({ queryKey: ["strong-exercise"] });
     },

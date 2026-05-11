@@ -1,25 +1,29 @@
 import { useMemo, useState } from "react";
-import { Activity, Dumbbell, FileUp, Loader2, Trophy, Upload, Utensils } from "lucide-react";
+import { Activity, Dumbbell, FileUp, Flame, Loader2, Scale, Trophy, TrendingUp, Upload, Utensils } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import {
   Bar,
   CartesianGrid,
+  Cell,
   ComposedChart,
   Line,
   ResponsiveContainer,
+  Scatter,
+  ScatterChart,
   Tooltip,
   XAxis,
   YAxis,
 } from "recharts";
 import {
   useImportStrongCsv,
+  useStrongAnalytics,
   useStrongExercise,
   useStrongImports,
   useStrongSessions,
   useStrongSummary,
 } from "../hooks/use-dashboard";
 import { fmt, formatShortDate, isoDate } from "../lib/format";
-import type { StrongExerciseSummary, StrongSessionRecord } from "../lib/types";
+import type { StrongAnalyticsResponse, StrongExerciseSummary, StrongExerciseTaxonomy, StrongSessionRecord, StrongWeeklyLoad } from "../lib/types";
 
 const RANGE_PRESETS = [
   { label: "30d", days: 30 },
@@ -27,6 +31,15 @@ const RANGE_PRESETS = [
   { label: "180d", days: 180 },
   { label: "All", days: 3650 },
 ];
+
+const SORT_OPTIONS = [
+  { value: "recent_pr", label: "Recent PR" },
+  { value: "volume", label: "Volume" },
+  { value: "last_performed", label: "Last done" },
+  { value: "estimated_1rm_delta", label: "1RM delta" },
+] as const;
+
+type ExerciseSort = typeof SORT_OPTIONS[number]["value"];
 
 function Card({ children, className = "" }: { children: React.ReactNode; className?: string }) {
   return (
@@ -123,11 +136,13 @@ function UploadPanel() {
   );
 }
 
-function WeeklyChart({ data }: { data: Array<{ week_start: string; total_volume: number; session_count: number }> }) {
+function WeeklyChart({ data }: { data: StrongWeeklyLoad[] }) {
   const rows = data.map((row) => ({
     week: formatShortDate(row.week_start),
     volume: Math.round(row.total_volume),
     sessions: row.session_count,
+    prs: row.pr_count,
+    protein: row.avg_protein == null ? null : Math.round(row.avg_protein),
   }));
   return (
     <ResponsiveContainer width="100%" height={230}>
@@ -142,8 +157,73 @@ function WeeklyChart({ data }: { data: Array<{ week_start: string; total_volume:
         />
         <Bar yAxisId="left" dataKey="volume" fill="var(--color-protein)" radius={[3, 3, 0, 0]} fillOpacity={0.75} />
         <Line yAxisId="right" type="monotone" dataKey="sessions" stroke="var(--color-calories)" strokeWidth={2} dot={false} />
+        <Line yAxisId="right" type="monotone" dataKey="prs" stroke="var(--color-fat)" strokeWidth={2} dot={{ r: 3 }} />
       </ComposedChart>
     </ResponsiveContainer>
+  );
+}
+
+function GroupBalanceChart({ analytics }: { analytics: StrongAnalyticsResponse }) {
+  const rows = analytics.group_balance.slice(0, 8).map((row) => ({
+    name: row.group,
+    volume: Math.round(row.total_volume),
+    sets: row.working_sets,
+    prs: row.estimated_1rm_prs,
+  }));
+  return (
+    <ResponsiveContainer width="100%" height={230}>
+      <ComposedChart data={rows} layout="vertical" margin={{ top: 4, right: 8, left: 8, bottom: 0 }}>
+        <CartesianGrid stroke="#27272a" strokeDasharray="3 3" horizontal={false} />
+        <XAxis type="number" tick={{ fill: "#71717a", fontSize: 10 }} axisLine={false} tickLine={false} />
+        <YAxis type="category" dataKey="name" tick={{ fill: "#a1a1aa", fontSize: 11 }} axisLine={false} tickLine={false} width={88} />
+        <Tooltip
+          contentStyle={{ background: "#18181b", border: "1px solid #3f3f46", borderRadius: 8, color: "#fafafa", fontSize: 12 }}
+          labelStyle={{ color: "#a1a1aa" }}
+        />
+        <Bar dataKey="volume" fill="var(--color-active)" radius={[0, 3, 3, 0]} fillOpacity={0.75} />
+        <Line type="monotone" dataKey="prs" stroke="var(--color-fat)" strokeWidth={2} dot={{ r: 3 }} />
+      </ComposedChart>
+    </ResponsiveContainer>
+  );
+}
+
+function NutritionScatter({ analytics }: { analytics: StrongAnalyticsResponse }) {
+  const rows = analytics.nutrition_training_days
+    .filter((day) => day.calories != null || day.protein != null)
+    .map((day) => ({
+      date: formatShortDate(day.date),
+      volume: Math.round(day.session_volume),
+      calories: day.calories,
+      protein: day.protein,
+      prs: day.pr_count,
+    }));
+  const proteinVolume = analytics.nutrition_correlations.find(
+    (item) => item.nutrient === "protein" && item.driver === "session_volume" && item.timing === "same_day"
+  );
+  return (
+    <div className="space-y-3">
+      <ResponsiveContainer width="100%" height={230}>
+        <ScatterChart data={rows} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+          <CartesianGrid stroke="#27272a" strokeDasharray="3 3" />
+          <XAxis dataKey="volume" name="Volume" tick={{ fill: "#71717a", fontSize: 10 }} axisLine={false} tickLine={false} />
+          <YAxis dataKey="protein" name="Protein" tick={{ fill: "#71717a", fontSize: 10 }} axisLine={false} tickLine={false} width={36} />
+          <Tooltip
+            cursor={{ stroke: "#52525b", strokeDasharray: "3 3" }}
+            contentStyle={{ background: "#18181b", border: "1px solid #3f3f46", borderRadius: 8, color: "#fafafa", fontSize: 12 }}
+            labelFormatter={(_, payload) => payload?.[0]?.payload?.date ?? ""}
+          />
+          <Scatter dataKey="protein" name="Protein">
+            {rows.map((row) => (
+              <Cell key={row.date} fill={row.prs > 0 ? "var(--color-fat)" : "var(--color-protein)"} />
+            ))}
+          </Scatter>
+        </ScatterChart>
+      </ResponsiveContainer>
+      <div className="flex items-center justify-between gap-3 text-xs">
+        <span className="text-zinc-500">Protein vs volume correlation</span>
+        <span className="font-bold text-zinc-100 tabular-nums">{fmt(proteinVolume?.correlation, 2)}</span>
+      </div>
+    </div>
   );
 }
 
@@ -179,6 +259,111 @@ function ExerciseList({
                   <p className="text-xs text-zinc-500 mt-0.5">
                     {exercise.sessions} sessions · {exercise.working_sets} sets · {fmt(exercise.total_volume, 0)} kg volume
                   </p>
+                </div>
+                <div className="text-right shrink-0">
+                  <p className="text-sm font-black text-zinc-100 tabular-nums">{fmt(exercise.best_estimated_1rm, 1)}</p>
+                  <p className="text-[10px] text-zinc-600">est 1RM</p>
+                </div>
+              </div>
+              {exercise.estimated_1rm_delta != null && Math.abs(exercise.estimated_1rm_delta) > 0.1 && (
+                <p className={`text-xs font-semibold mt-2 ${exercise.estimated_1rm_delta > 0 ? "text-emerald-400" : "text-red-400"}`}>
+                  {exercise.estimated_1rm_delta > 0 ? "+" : ""}{fmt(exercise.estimated_1rm_delta, 1)} kg recent change
+                </p>
+              )}
+            </button>
+          );
+        })}
+      </div>
+    </Card>
+  );
+}
+
+function AdvancedExerciseList({
+  exercises,
+  taxonomy,
+  groupFilter,
+  sortBy,
+  onGroupFilter,
+  onSort,
+  selected,
+  onSelect,
+}: {
+  exercises: StrongExerciseSummary[];
+  taxonomy: Record<string, StrongExerciseTaxonomy>;
+  groupFilter: string;
+  sortBy: ExerciseSort;
+  onGroupFilter: (group: string) => void;
+  onSort: (sort: ExerciseSort) => void;
+  selected: string | null;
+  onSelect: (exercise: string) => void;
+}) {
+  const groups = useMemo(
+    () => ["All", ...Array.from(new Set(exercises.map((exercise) => taxonomy[exercise.exercise_name]?.primary_group ?? "Other"))).sort()],
+    [exercises, taxonomy]
+  );
+  const visibleExercises = useMemo(() => {
+    const filtered = groupFilter === "All"
+      ? exercises
+      : exercises.filter((exercise) => (taxonomy[exercise.exercise_name]?.primary_group ?? "Other") === groupFilter);
+    return [...filtered].sort((a, b) => {
+      if (sortBy === "volume") return b.total_volume - a.total_volume;
+      if (sortBy === "last_performed") return String(b.last_performed ?? "").localeCompare(String(a.last_performed ?? ""));
+      if (sortBy === "estimated_1rm_delta") return (b.estimated_1rm_delta ?? -Infinity) - (a.estimated_1rm_delta ?? -Infinity);
+      return Number((b.estimated_1rm_delta ?? 0) > 0) - Number((a.estimated_1rm_delta ?? 0) > 0)
+        || String(b.last_performed ?? "").localeCompare(String(a.last_performed ?? ""));
+    });
+  }, [exercises, groupFilter, sortBy, taxonomy]);
+
+  return (
+    <Card className="min-h-[420px]">
+      <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+        <div>
+          <p className="text-xs font-semibold text-zinc-500 uppercase tracking-wide">Exercise progress</p>
+          <span className="text-xs text-zinc-600">{visibleExercises.length} / {exercises.length} exercises</span>
+        </div>
+        <div className="flex gap-2">
+          <select
+            value={groupFilter}
+            onChange={(event) => onGroupFilter(event.target.value)}
+            className="bg-zinc-800 border border-zinc-700 rounded-lg px-2 py-1.5 text-xs text-zinc-300"
+          >
+            {groups.map((group) => <option key={group} value={group}>{group}</option>)}
+          </select>
+          <select
+            value={sortBy}
+            onChange={(event) => onSort(event.target.value as ExerciseSort)}
+            className="bg-zinc-800 border border-zinc-700 rounded-lg px-2 py-1.5 text-xs text-zinc-300"
+          >
+            {SORT_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+          </select>
+        </div>
+      </div>
+      <div className="space-y-2 max-h-[580px] overflow-y-auto pr-1">
+        {visibleExercises.slice(0, 50).map((exercise) => {
+          const active = selected === exercise.exercise_name;
+          const exerciseTaxonomy = taxonomy[exercise.exercise_name] ?? { primary_group: "Other", movement_pattern: "Other", secondary_groups: [] };
+          return (
+            <button
+              key={exercise.exercise_name}
+              onClick={() => onSelect(exercise.exercise_name)}
+              className={`w-full text-left rounded-xl border p-3 transition-colors ${
+                active ? "border-emerald-500/60 bg-emerald-500/10" : "border-zinc-800 hover:border-zinc-700 hover:bg-zinc-800/30"
+              }`}
+            >
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <p className="text-sm font-semibold text-zinc-100">{exercise.exercise_name}</p>
+                  <p className="text-xs text-zinc-500 mt-0.5">
+                    {exercise.sessions} sessions / {exercise.working_sets} sets / {fmt(exercise.total_volume, 0)} kg volume
+                  </p>
+                  <div className="mt-2 flex flex-wrap gap-1.5">
+                    <span className="rounded-full bg-zinc-800 px-2 py-0.5 text-[10px] font-semibold text-zinc-400">
+                      {exerciseTaxonomy.primary_group}
+                    </span>
+                    <span className="rounded-full bg-zinc-800 px-2 py-0.5 text-[10px] font-semibold text-zinc-500">
+                      {exerciseTaxonomy.movement_pattern}
+                    </span>
+                  </div>
                 </div>
                 <div className="text-right shrink-0">
                   <p className="text-sm font-black text-zinc-100 tabular-nums">{fmt(exercise.best_estimated_1rm, 1)}</p>
@@ -290,14 +475,79 @@ function SessionTable({ sessions }: { sessions: StrongSessionRecord[] }) {
   );
 }
 
+function AdvancedSessionTable({
+  sessions,
+  taxonomy,
+  prCountByDate,
+}: {
+  sessions: StrongSessionRecord[];
+  taxonomy: Record<string, StrongExerciseTaxonomy>;
+  prCountByDate: Map<string, number>;
+}) {
+  return (
+    <Card>
+      <p className="text-xs font-semibold text-zinc-500 uppercase tracking-wide mb-3">Recent sessions</p>
+      <div className="overflow-x-auto">
+        <table className="w-full text-xs">
+          <thead>
+            <tr className="border-b border-zinc-800 text-zinc-500">
+              <th className="text-left py-2 pr-3 font-semibold">Date</th>
+              <th className="text-left py-2 px-2 font-semibold">Workout</th>
+              <th className="text-left py-2 px-2 font-semibold">Groups</th>
+              <th className="text-left py-2 px-2 font-semibold">Preview</th>
+              <th className="text-right py-2 px-2 font-semibold">Sets</th>
+              <th className="text-right py-2 px-2 font-semibold">Volume</th>
+              <th className="text-right py-2 pl-2 font-semibold">Duration</th>
+            </tr>
+          </thead>
+          <tbody>
+            {sessions.slice(0, 20).map((session) => {
+              const groups = Array.from(new Set(session.sets.map((set) => taxonomy[set.exercise_name]?.primary_group ?? "Other"))).slice(0, 3);
+              const preview = session.sets.filter((set) => !set.is_warmup).slice(0, 3);
+              const prCount = prCountByDate.get(session.workout_date) ?? 0;
+              return (
+                <tr key={session.id} className="border-t border-zinc-800/60 hover:bg-zinc-800/30 transition-colors">
+                  <td className="py-2 pr-3 text-zinc-400">{formatShortDate(session.workout_date)}</td>
+                  <td className="py-2 px-2">
+                    <div className="flex items-center gap-2">
+                      <p className="font-semibold text-zinc-100">{session.workout_name}</p>
+                      {prCount > 0 && <span className="rounded-full bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-bold text-amber-300">{prCount} PR</span>}
+                    </div>
+                    <p className="text-zinc-600">{session.exercise_count} exercises</p>
+                  </td>
+                  <td className="py-2 px-2">
+                    <div className="flex flex-wrap gap-1">
+                      {groups.map((group) => <span key={group} className="rounded-full bg-zinc-800 px-1.5 py-0.5 text-[10px] text-zinc-400">{group}</span>)}
+                    </div>
+                  </td>
+                  <td className="py-2 px-2 text-zinc-500">
+                    {preview.map((set) => `${set.exercise_name} ${fmt(set.weight, 0)}x${fmt(set.reps, 0)}`).join(" / ")}
+                  </td>
+                  <td className="py-2 px-2 text-right text-zinc-300 tabular-nums">{session.working_set_count}</td>
+                  <td className="py-2 px-2 text-right text-zinc-300 tabular-nums">{fmt(session.total_volume, 0)} kg</td>
+                  <td className="py-2 pl-2 text-right text-zinc-400 tabular-nums">{duration(session.duration_seconds)}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </Card>
+  );
+}
+
 export function Workouts() {
   const [start, setStart] = useState(offset(89));
   const [end, setEnd] = useState(isoDate());
   const summary = useStrongSummary(start, end);
+  const analytics = useStrongAnalytics(start, end);
   const sessions = useStrongSessions(start, end);
   const [selectedExercise, setSelectedExercise] = useState<string | null>(null);
+  const [groupFilter, setGroupFilter] = useState("All");
+  const [sortBy, setSortBy] = useState<ExerciseSort>("recent_pr");
 
   const topExercises = summary.data?.exercises ?? [];
+  const taxonomy = analytics.data?.exercise_taxonomy ?? {};
   const effectiveSelected = selectedExercise ?? topExercises[0]?.exercise_name ?? null;
   const strongestPr = summary.data?.recent_prs[0];
 
@@ -305,6 +555,23 @@ export function Workouts() {
     const weeks = summary.data?.weekly.length ?? 0;
     return weeks ? (summary.data!.session_count / weeks).toFixed(1) : "0.0";
   }, [summary.data]);
+
+  const trainingRestCalorieDelta = useMemo(() => {
+    const delta = analytics.data?.recovery_load_markers.training_rest_deltas.find((item) => item.metric === "calories");
+    return delta?.delta ?? null;
+  }, [analytics.data]);
+
+  const loadTrend = useMemo(() => {
+    const weeks = analytics.data?.weekly_load ?? [];
+    if (weeks.length < 2) return null;
+    const previous = weeks[weeks.length - 2].total_volume;
+    const current = weeks[weeks.length - 1].total_volume;
+    return current - previous;
+  }, [analytics.data]);
+
+  const prCountByDate = useMemo(() => new Map(
+    (analytics.data?.nutrition_training_days ?? []).map((day) => [day.date, day.pr_count])
+  ), [analytics.data]);
 
   function applyPreset(days: number) {
     setEnd(isoDate());
@@ -347,7 +614,7 @@ export function Workouts() {
 
       <UploadPanel />
 
-      {summary.isLoading ? (
+      {summary.isLoading || analytics.isLoading ? (
         <div className="h-72 flex items-center justify-center">
           <Loader2 size={26} className="animate-spin text-emerald-400" />
         </div>
@@ -360,15 +627,31 @@ export function Workouts() {
         </Card>
       ) : (
         <>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3">
             <Stat label="Sessions / week" value={sessionsPerWeek} Icon={Dumbbell} />
-            <Stat label="Working sets" value={fmt(summary.data.working_set_count, 0)} Icon={Activity} />
-            <Stat label="Volume" value={fmt(summary.data.total_volume, 0)} unit="kg" Icon={Trophy} />
+            <Stat label="Volume" value={fmt(analytics.data?.totals.total_volume ?? summary.data.total_volume, 0)} unit="kg" Icon={Trophy} />
+            <Stat
+              label="PRs"
+              value={fmt(analytics.data?.totals.pr_count, 0)}
+              Icon={Flame}
+            />
             <Stat
               label="Training protein"
               value={fmt(summary.data.nutrition.training_avg_protein, 0)}
               unit="g/day"
               Icon={Utensils}
+            />
+            <Stat
+              label="Calorie delta"
+              value={trainingRestCalorieDelta == null ? "—" : `${trainingRestCalorieDelta > 0 ? "+" : ""}${fmt(trainingRestCalorieDelta, 0)}`}
+              unit="vs rest"
+              Icon={Scale}
+            />
+            <Stat
+              label="Load trend"
+              value={loadTrend == null ? "—" : `${loadTrend > 0 ? "+" : ""}${fmt(loadTrend, 0)}`}
+              unit="kg"
+              Icon={TrendingUp}
             />
           </div>
 
@@ -382,7 +665,7 @@ export function Workouts() {
                   </span>
                 )}
               </div>
-              <WeeklyChart data={summary.data.weekly} />
+              <WeeklyChart data={analytics.data?.weekly_load ?? []} />
             </Card>
 
             <Card>
@@ -404,16 +687,34 @@ export function Workouts() {
             </Card>
           </div>
 
+          {analytics.data && (
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+              <Card>
+                <p className="text-xs font-semibold text-zinc-500 uppercase tracking-wide mb-3">Nutrition vs training load</p>
+                <NutritionScatter analytics={analytics.data} />
+              </Card>
+              <Card>
+                <p className="text-xs font-semibold text-zinc-500 uppercase tracking-wide mb-3">Movement balance</p>
+                <GroupBalanceChart analytics={analytics.data} />
+              </Card>
+            </div>
+          )}
+
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-            <ExerciseList
+            <AdvancedExerciseList
               exercises={topExercises}
+              taxonomy={taxonomy}
+              groupFilter={groupFilter}
+              sortBy={sortBy}
+              onGroupFilter={setGroupFilter}
+              onSort={setSortBy}
               selected={effectiveSelected}
               onSelect={setSelectedExercise}
             />
             <ExerciseDetail exerciseName={effectiveSelected} start={start} end={end} />
           </div>
 
-          <SessionTable sessions={sessions.data?.sessions ?? []} />
+          <AdvancedSessionTable sessions={sessions.data?.sessions ?? []} taxonomy={taxonomy} prCountByDate={prCountByDate} />
         </>
       )}
     </div>

@@ -32,6 +32,7 @@ from macrofactor_scraper.models import (
     MetricListResponse,
     MetricRecordsResponse,
     RepairReport,
+    StrongAnalyticsResponse,
     StrongExerciseDetailResponse,
     StrongImportListResponse,
     StrongImportResponse,
@@ -340,6 +341,18 @@ async def strong_summary(
 ) -> StrongSummaryResponse:
     try:
         return service.strong_summary(start, end)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.get("/v1/strong/analytics", response_model=StrongAnalyticsResponse, dependencies=[Depends(require_private_access)])
+async def strong_analytics(
+    start: date | None = None,
+    end: date | None = None,
+    service: HealthAutoExportService = Depends(get_health_export_service),
+) -> StrongAnalyticsResponse:
+    try:
+        return service.strong_analytics(start, end)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 

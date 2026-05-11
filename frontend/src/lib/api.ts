@@ -5,6 +5,7 @@ import type {
   MetricCatalogResponse,
   Preferences,
   RepairReport,
+  StrongAnalyticsResponse,
   StrongExerciseDetailResponse,
   StrongImportListResponse,
   StrongImportResponse,
@@ -62,6 +63,8 @@ export const api = {
     imports: () => request<StrongImportListResponse>("/v1/strong/imports"),
     summary: (start: string, end: string) =>
       request<StrongSummaryResponse>(`/v1/strong/summary?start=${start}&end=${end}`),
+    analytics: (start: string, end: string) =>
+      request<StrongAnalyticsResponse>(`/v1/strong/analytics?start=${start}&end=${end}`),
     sessions: (start: string, end: string) =>
       request<StrongSessionListResponse>(`/v1/strong/sessions?start=${start}&end=${end}`),
     exercise: (exerciseName: string, start: string, end: string) =>

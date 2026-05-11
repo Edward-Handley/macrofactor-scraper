@@ -291,6 +291,12 @@ class StrongRecentPr(BaseModel):
     estimated_1rm: float | None = None
 
 
+class StrongExerciseTaxonomy(BaseModel):
+    movement_pattern: str
+    primary_group: str
+    secondary_groups: list[str] = Field(default_factory=list)
+
+
 class StrongSummaryResponse(BaseModel):
     start: dt.date | None = None
     end: dt.date | None = None
@@ -319,6 +325,108 @@ class StrongExerciseDetailResponse(BaseModel):
     exercise_name: str
     points: list[StrongExerciseProgressPoint]
     sessions: list[StrongSessionRecord]
+
+
+class StrongAnalyticsTotals(BaseModel):
+    sessions: int
+    working_sets: int
+    total_volume: float
+    duration_seconds: int
+    exercises: int
+    pr_count: int
+
+
+class StrongWeeklyLoad(BaseModel):
+    week_start: dt.date
+    session_count: int
+    working_set_count: int
+    total_volume: float
+    duration_seconds: int
+    exercise_count: int
+    pr_count: int
+    avg_calories: float | None = None
+    avg_protein: float | None = None
+    avg_carbohydrates: float | None = None
+    avg_fat: float | None = None
+
+
+class StrongGroupBalance(BaseModel):
+    group: str
+    movement_pattern: str
+    sessions: int
+    working_sets: int
+    total_volume: float
+    estimated_1rm_prs: int
+
+
+class StrongNutritionTrainingDay(BaseModel):
+    date: dt.date
+    session_volume: float
+    working_sets: int
+    duration_seconds: int
+    pr_count: int
+    calories: float | None = None
+    protein: float | None = None
+    carbohydrates: float | None = None
+    fat: float | None = None
+    weight: float | None = None
+    active_energy: float | None = None
+    prior_calories: float | None = None
+    prior_protein: float | None = None
+    prior_carbohydrates: float | None = None
+    prior_fat: float | None = None
+    prior_weight: float | None = None
+    prior_active_energy: float | None = None
+
+
+class StrongNutritionCorrelation(BaseModel):
+    nutrient: str
+    driver: str
+    timing: str
+    sample_count: int
+    correlation: float | None = None
+    average_on_pr_days: float | None = None
+    average_on_non_pr_training_days: float | None = None
+
+
+class StrongTrainingRestDelta(BaseModel):
+    metric: str
+    training_average: float | None = None
+    rest_average: float | None = None
+    delta: float | None = None
+
+
+class StrongHighVolumeWeek(BaseModel):
+    week_start: dt.date
+    total_volume: float
+    session_count: int
+    working_set_count: int
+
+
+class StrongLowProteinTrainingDay(BaseModel):
+    date: dt.date
+    protein: float | None = None
+    session_volume: float
+    working_sets: int
+
+
+class StrongRecoveryLoadMarkers(BaseModel):
+    high_volume_weeks: list[StrongHighVolumeWeek]
+    low_protein_training_days: list[StrongLowProteinTrainingDay]
+    training_rest_deltas: list[StrongTrainingRestDelta]
+
+
+class StrongAnalyticsResponse(BaseModel):
+    start: dt.date | None = None
+    end: dt.date | None = None
+    nutrition_start_date: dt.date | None = None
+    totals: StrongAnalyticsTotals
+    weekly_load: list[StrongWeeklyLoad]
+    group_balance: list[StrongGroupBalance]
+    exercise_taxonomy: dict[str, StrongExerciseTaxonomy]
+    nutrition_training_days: list[StrongNutritionTrainingDay]
+    nutrition_correlations: list[StrongNutritionCorrelation]
+    recovery_load_markers: StrongRecoveryLoadMarkers
 
 
 class RepairDayDelta(BaseModel):

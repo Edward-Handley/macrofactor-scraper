@@ -26,18 +26,29 @@ from macrofactor_scraper.models import (
     MetricRecord,
     MetricRecordsResponse,
     MetricSummary,
+    StrongAnalyticsResponse,
+    StrongAnalyticsTotals,
     StrongExerciseDetailResponse,
     StrongExerciseProgressPoint,
     StrongExerciseSummary,
+    StrongExerciseTaxonomy,
+    StrongGroupBalance,
+    StrongHighVolumeWeek,
     StrongImportListResponse,
     StrongImportRecord,
     StrongImportResponse,
+    StrongLowProteinTrainingDay,
     StrongNutritionComparison,
+    StrongNutritionCorrelation,
+    StrongNutritionTrainingDay,
     StrongRecentPr,
+    StrongRecoveryLoadMarkers,
     StrongSessionListResponse,
     StrongSessionRecord,
     StrongSetRecord,
     StrongSummaryResponse,
+    StrongTrainingRestDelta,
+    StrongWeeklyLoad,
     StrongWeeklySummary,
     WorkoutListResponse,
     WorkoutRecord,
@@ -61,6 +72,20 @@ STRONG_REQUIRED_COLUMNS = {
     "Workout Notes",
     "RPE",
 }
+
+EXERCISE_TAXONOMY_RULES: tuple[tuple[tuple[str, ...], StrongExerciseTaxonomy], ...] = (
+    (("bench press", "chest press", "push up", "dip"), StrongExerciseTaxonomy(movement_pattern="Horizontal Push", primary_group="Chest", secondary_groups=["Triceps", "Shoulders"])),
+    (("overhead press", "shoulder press", "military press", "arnold press"), StrongExerciseTaxonomy(movement_pattern="Vertical Push", primary_group="Shoulders", secondary_groups=["Triceps"])),
+    (("lat pulldown", "pull up", "chin up"), StrongExerciseTaxonomy(movement_pattern="Vertical Pull", primary_group="Back", secondary_groups=["Biceps"])),
+    (("row", "face pull", "reverse fly"), StrongExerciseTaxonomy(movement_pattern="Horizontal Pull", primary_group="Back", secondary_groups=["Biceps", "Rear Delts"])),
+    (("squat", "leg press", "lunge", "split squat", "leg extension"), StrongExerciseTaxonomy(movement_pattern="Squat", primary_group="Quads", secondary_groups=["Glutes"])),
+    (("deadlift", "romanian deadlift", "good morning", "hip thrust", "glute bridge"), StrongExerciseTaxonomy(movement_pattern="Hinge", primary_group="Posterior Chain", secondary_groups=["Hamstrings", "Glutes", "Back"])),
+    (("leg curl", "hamstring curl"), StrongExerciseTaxonomy(movement_pattern="Knee Flexion", primary_group="Hamstrings", secondary_groups=[])),
+    (("curl",), StrongExerciseTaxonomy(movement_pattern="Arm Isolation", primary_group="Biceps", secondary_groups=[])),
+    (("tricep", "triceps", "skullcrusher", "pushdown"), StrongExerciseTaxonomy(movement_pattern="Arm Isolation", primary_group="Triceps", secondary_groups=[])),
+    (("calf raise",), StrongExerciseTaxonomy(movement_pattern="Lower Isolation", primary_group="Calves", secondary_groups=[])),
+    (("crunch", "plank", "leg raise", "sit up", "ab wheel"), StrongExerciseTaxonomy(movement_pattern="Core", primary_group="Core", secondary_groups=[])),
+)
 
 
 @dataclass(frozen=True)
@@ -469,6 +494,49 @@ class HealthAutoExportService:
             exercises=exercises,
             nutrition=self._strong_nutrition_comparison(start, end, session_dates),
             recent_prs=self._strong_recent_prs(working_rows),
+        )
+
+    def strong_analytics(self, start: date | None = None, end: date | None = None) -> StrongAnalyticsResponse:
+        self._ensure_schema()
+        _validate_range(start, end)
+        sessions = self._strong_session_records(start, end, include_sets=False)
+        set_rows = self._strong_set_rows(start, end)
+        working_rows = [row for row in set_rows if not bool(row["is_warmup"])]
+        pr_rows = self._strong_pr_rows(working_rows)
+        pr_count_by_week: dict[date, int] = {}
+        for row in pr_rows:
+            day = _parse_date(row["workout_date"])
+            if day is not None:
+                week = _week_start(day)
+                pr_count_by_week[week] = pr_count_by_week.get(week, 0) + 1
+        exercise_taxonomy = {
+            exercise: classify_strong_exercise(exercise)
+            for exercise in sorted({row["exercise_name"] for row in working_rows})
+        }
+        nutrition_days = self._daily_summary_items(start, end, include_hidden=True)
+        nutrition_by_date = {item.date: item for item in nutrition_days}
+        session_dates = {session.workout_date for session in sessions}
+        nutrition_comparison = self._strong_nutrition_comparison(start, end, session_dates)
+        weekly_load = self._strong_weekly_load(sessions, working_rows, pr_count_by_week, nutrition_by_date)
+        nutrition_training_days = self._strong_nutrition_training_days(sessions, working_rows, pr_rows, nutrition_by_date)
+        return StrongAnalyticsResponse(
+            start=start,
+            end=end,
+            nutrition_start_date=self._nutrition_start_date(),
+            totals=StrongAnalyticsTotals(
+                sessions=len(sessions),
+                working_sets=len(working_rows),
+                total_volume=sum(_strong_volume_from_row(row) for row in working_rows),
+                duration_seconds=sum(session.duration_seconds or 0 for session in sessions),
+                exercises=len(exercise_taxonomy),
+                pr_count=len(pr_rows),
+            ),
+            weekly_load=weekly_load,
+            group_balance=self._strong_group_balance(working_rows, pr_rows),
+            exercise_taxonomy=exercise_taxonomy,
+            nutrition_training_days=nutrition_training_days,
+            nutrition_correlations=self._strong_nutrition_correlations(nutrition_training_days),
+            recovery_load_markers=self._strong_recovery_load_markers(weekly_load, nutrition_training_days, nutrition_comparison),
         )
 
     def strong_exercise_detail(self, exercise_name: str, start: date | None = None, end: date | None = None) -> StrongExerciseDetailResponse:
@@ -912,6 +980,187 @@ class HealthAutoExportService:
             )
         return output
 
+    def _strong_weekly_load(
+        self,
+        sessions: list[StrongSessionRecord],
+        working_rows: list[sqlite3.Row],
+        pr_count_by_week: dict[date, int],
+        nutrition_by_date: dict[date, DailySummary],
+    ) -> list[StrongWeeklyLoad]:
+        session_weeks: dict[date, list[StrongSessionRecord]] = {}
+        for session in sessions:
+            session_weeks.setdefault(_week_start(session.workout_date), []).append(session)
+        rows_by_week: dict[date, list[sqlite3.Row]] = {}
+        for row in working_rows:
+            day = _parse_date(row["workout_date"])
+            if day is not None:
+                rows_by_week.setdefault(_week_start(day), []).append(row)
+        output: list[StrongWeeklyLoad] = []
+        for week in sorted(set(session_weeks) | set(rows_by_week) | set(pr_count_by_week)):
+            week_sessions = session_weeks.get(week, [])
+            week_rows = rows_by_week.get(week, [])
+            days = [week + _date_delta(i) for i in range(7)]
+            nutrition_days = [nutrition_by_date[day] for day in days if day in nutrition_by_date]
+            output.append(
+                StrongWeeklyLoad(
+                    week_start=week,
+                    session_count=len(week_sessions),
+                    working_set_count=len(week_rows),
+                    total_volume=sum(_strong_volume_from_row(row) for row in week_rows),
+                    duration_seconds=sum(session.duration_seconds or 0 for session in week_sessions),
+                    exercise_count=len({row["exercise_name"] for row in week_rows}),
+                    pr_count=pr_count_by_week.get(week, 0),
+                    avg_calories=_avg([day.calories for day in nutrition_days]),
+                    avg_protein=_avg([day.protein for day in nutrition_days]),
+                    avg_carbohydrates=_avg([day.carbohydrates for day in nutrition_days]),
+                    avg_fat=_avg([day.fat for day in nutrition_days]),
+                )
+            )
+        return output
+
+    def _strong_group_balance(self, working_rows: list[sqlite3.Row], pr_rows: list[sqlite3.Row]) -> list[StrongGroupBalance]:
+        pr_ids = {int(row["id"]) for row in pr_rows}
+        grouped: dict[tuple[str, str], dict[str, Any]] = {}
+        for row in working_rows:
+            taxonomy = classify_strong_exercise(row["exercise_name"])
+            key = (taxonomy.primary_group, taxonomy.movement_pattern)
+            bucket = grouped.setdefault(key, {"sessions": set(), "sets": 0, "volume": 0.0, "prs": 0})
+            bucket["sessions"].add(int(row["session_id"]))
+            bucket["sets"] += 1
+            bucket["volume"] += _strong_volume_from_row(row)
+            if int(row["id"]) in pr_ids:
+                bucket["prs"] += 1
+        return [
+            StrongGroupBalance(
+                group=group,
+                movement_pattern=movement,
+                sessions=len(values["sessions"]),
+                working_sets=int(values["sets"]),
+                total_volume=float(values["volume"]),
+                estimated_1rm_prs=int(values["prs"]),
+            )
+            for (group, movement), values in sorted(grouped.items(), key=lambda item: item[1]["volume"], reverse=True)
+        ]
+
+    def _strong_nutrition_training_days(
+        self,
+        sessions: list[StrongSessionRecord],
+        working_rows: list[sqlite3.Row],
+        pr_rows: list[sqlite3.Row],
+        nutrition_by_date: dict[date, DailySummary],
+    ) -> list[StrongNutritionTrainingDay]:
+        sessions_by_date: dict[date, list[StrongSessionRecord]] = {}
+        for session in sessions:
+            sessions_by_date.setdefault(session.workout_date, []).append(session)
+        rows_by_date: dict[date, list[sqlite3.Row]] = {}
+        for row in working_rows:
+            day = _parse_date(row["workout_date"])
+            if day is not None:
+                rows_by_date.setdefault(day, []).append(row)
+        prs_by_date: dict[date, int] = {}
+        for row in pr_rows:
+            day = _parse_date(row["workout_date"])
+            if day is not None:
+                prs_by_date[day] = prs_by_date.get(day, 0) + 1
+        output: list[StrongNutritionTrainingDay] = []
+        for day in sorted(sessions_by_date):
+            nutrition = nutrition_by_date.get(day)
+            prior = nutrition_by_date.get(day - _date_delta(1))
+            day_rows = rows_by_date.get(day, [])
+            day_sessions = sessions_by_date.get(day, [])
+            output.append(
+                StrongNutritionTrainingDay(
+                    date=day,
+                    session_volume=sum(_strong_volume_from_row(row) for row in day_rows),
+                    working_sets=len(day_rows),
+                    duration_seconds=sum(session.duration_seconds or 0 for session in day_sessions),
+                    pr_count=prs_by_date.get(day, 0),
+                    calories=nutrition.calories if nutrition else None,
+                    protein=nutrition.protein if nutrition else None,
+                    carbohydrates=nutrition.carbohydrates if nutrition else None,
+                    fat=nutrition.fat if nutrition else None,
+                    weight=nutrition.weight if nutrition else None,
+                    active_energy=nutrition.active_energy if nutrition else None,
+                    prior_calories=prior.calories if prior else None,
+                    prior_protein=prior.protein if prior else None,
+                    prior_carbohydrates=prior.carbohydrates if prior else None,
+                    prior_fat=prior.fat if prior else None,
+                    prior_weight=prior.weight if prior else None,
+                    prior_active_energy=prior.active_energy if prior else None,
+                )
+            )
+        return output
+
+    def _strong_nutrition_correlations(self, days: list[StrongNutritionTrainingDay]) -> list[StrongNutritionCorrelation]:
+        output: list[StrongNutritionCorrelation] = []
+        nutrients = ("calories", "protein", "carbohydrates", "fat", "weight", "active_energy")
+        drivers = ("session_volume", "working_sets", "duration_seconds")
+        for nutrient in nutrients:
+            for timing, attr in (("same_day", nutrient), ("prior_day", f"prior_{nutrient}")):
+                values = [getattr(day, attr) for day in days]
+                pr_values = [value for day, value in zip(days, values) if value is not None and day.pr_count > 0]
+                non_pr_values = [value for day, value in zip(days, values) if value is not None and day.pr_count == 0]
+                for driver in drivers:
+                    pairs = [
+                        (float(getattr(day, driver)), float(value))
+                        for day, value in zip(days, values)
+                        if value is not None and getattr(day, driver) is not None
+                    ]
+                    output.append(
+                        StrongNutritionCorrelation(
+                            nutrient=nutrient,
+                            driver=driver,
+                            timing=timing,
+                            sample_count=len(pairs),
+                            correlation=_pearson(pairs),
+                            average_on_pr_days=_avg(pr_values),
+                            average_on_non_pr_training_days=_avg(non_pr_values),
+                        )
+                    )
+        return output
+
+    def _strong_recovery_load_markers(
+        self,
+        weekly_load: list[StrongWeeklyLoad],
+        training_days: list[StrongNutritionTrainingDay],
+        nutrition: StrongNutritionComparison,
+    ) -> StrongRecoveryLoadMarkers:
+        volumes = [week.total_volume for week in weekly_load if week.total_volume > 0]
+        avg_volume = sum(volumes) / len(volumes) if volumes else 0
+        high_volume_weeks = [
+            StrongHighVolumeWeek(
+                week_start=week.week_start,
+                total_volume=week.total_volume,
+                session_count=week.session_count,
+                working_set_count=week.working_set_count,
+            )
+            for week in weekly_load
+            if avg_volume and week.total_volume >= avg_volume * 1.25
+        ]
+        protein_values = [day.protein for day in training_days if day.protein is not None]
+        avg_training_protein = sum(protein_values) / len(protein_values) if protein_values else None
+        low_protein_training_days = [
+            StrongLowProteinTrainingDay(
+                date=day.date,
+                protein=day.protein,
+                session_volume=day.session_volume,
+                working_sets=day.working_sets,
+            )
+            for day in training_days
+            if avg_training_protein is not None and day.protein is not None and day.protein < avg_training_protein * 0.8
+        ]
+        deltas = [
+            _training_rest_delta("calories", nutrition.training_avg_calories, nutrition.rest_avg_calories),
+            _training_rest_delta("protein", nutrition.training_avg_protein, nutrition.rest_avg_protein),
+            _training_rest_delta("weight", nutrition.training_avg_weight, nutrition.rest_avg_weight),
+            _training_rest_delta("active_energy", nutrition.training_avg_active_energy, nutrition.rest_avg_active_energy),
+        ]
+        return StrongRecoveryLoadMarkers(
+            high_volume_weeks=high_volume_weeks,
+            low_protein_training_days=low_protein_training_days,
+            training_rest_deltas=deltas,
+        )
+
     def _strong_exercise_summaries(self, working_rows: list[sqlite3.Row]) -> list[StrongExerciseSummary]:
         grouped: dict[str, list[sqlite3.Row]] = {}
         for row in working_rows:
@@ -955,8 +1204,23 @@ class HealthAutoExportService:
         )
 
     def _strong_recent_prs(self, working_rows: list[sqlite3.Row]) -> list[StrongRecentPr]:
+        pr_rows = self._strong_pr_rows(working_rows)
+        return [
+            StrongRecentPr(
+                date=day,
+                exercise_name=row["exercise_name"],
+                weight=row["weight"],
+                reps=row["reps"],
+                estimated_1rm=_strong_estimated_1rm_from_row(row),
+            )
+            for row in pr_rows[-10:][::-1]
+            for day in [_parse_date(row["workout_date"])]
+            if day is not None
+        ]
+
+    def _strong_pr_rows(self, working_rows: list[sqlite3.Row]) -> list[sqlite3.Row]:
         best_by_exercise: dict[str, float] = {}
-        prs: list[StrongRecentPr] = []
+        prs: list[sqlite3.Row] = []
         for row in sorted(working_rows, key=lambda item: (item["workout_date"], item["id"])):
             estimate = _strong_estimated_1rm_from_row(row)
             if estimate is None:
@@ -965,18 +1229,8 @@ class HealthAutoExportService:
             previous = best_by_exercise.get(exercise)
             if previous is None or estimate > previous + 0.01:
                 best_by_exercise[exercise] = estimate
-                day = _parse_date(row["workout_date"])
-                if day is not None:
-                    prs.append(
-                        StrongRecentPr(
-                            date=day,
-                            exercise_name=exercise,
-                            weight=row["weight"],
-                            reps=row["reps"],
-                            estimated_1rm=estimate,
-                        )
-                    )
-        return prs[-10:][::-1]
+                prs.append(row)
+        return prs
 
     def close(self) -> None:
         return None
@@ -1388,6 +1642,14 @@ def _strong_estimated_1rm_from_row(row: sqlite3.Row) -> float | None:
     return weight * (1 + reps / 30)
 
 
+def classify_strong_exercise(exercise_name: str) -> StrongExerciseTaxonomy:
+    normalized = exercise_name.lower()
+    for needles, taxonomy in EXERCISE_TAXONOMY_RULES:
+        if any(needle in normalized for needle in needles):
+            return taxonomy
+    return StrongExerciseTaxonomy(movement_pattern="Other", primary_group="Other", secondary_groups=[])
+
+
 def _parse_strong_duration(value: str | None) -> int | None:
     if not value:
         return None
@@ -1419,6 +1681,32 @@ def _date_delta(days: int) -> timedelta:
 def _avg(values: Iterable[float | None]) -> float | None:
     nums = [float(value) for value in values if value is not None]
     return sum(nums) / len(nums) if nums else None
+
+
+def _pearson(pairs: Iterable[tuple[float, float]]) -> float | None:
+    values = list(pairs)
+    if len(values) < 2:
+        return None
+    xs = [pair[0] for pair in values]
+    ys = [pair[1] for pair in values]
+    mean_x = sum(xs) / len(xs)
+    mean_y = sum(ys) / len(ys)
+    numerator = sum((x - mean_x) * (y - mean_y) for x, y in values)
+    denom_x = sum((x - mean_x) ** 2 for x in xs)
+    denom_y = sum((y - mean_y) ** 2 for y in ys)
+    denominator = (denom_x * denom_y) ** 0.5
+    if denominator == 0:
+        return None
+    return numerator / denominator
+
+
+def _training_rest_delta(metric: str, training: float | None, rest: float | None) -> StrongTrainingRestDelta:
+    return StrongTrainingRestDelta(
+        metric=metric,
+        training_average=training,
+        rest_average=rest,
+        delta=training - rest if training is not None and rest is not None else None,
+    )
 
 
 def _summary_key(metric_name: str) -> str | None:

@@ -6,7 +6,7 @@ from fastapi.testclient import TestClient
 from macrofactor_scraper import api as api_module
 from macrofactor_scraper.api import app, get_health_export_service
 from macrofactor_scraper.config import Settings, get_settings
-from macrofactor_scraper.health_export import HealthAutoExportService
+from macrofactor_scraper.health_export import HealthAutoExportService, classify_strong_exercise
 
 
 def _client(tmp_path: Path, *, read_api_key: str | None = None) -> TestClient:
@@ -422,6 +422,47 @@ def test_strong_csv_import_filters_dedupes_and_summarizes(tmp_path: Path) -> Non
         assert detail.json()["points"][0]["working_sets"] == 2
     finally:
         _clear_overrides()
+
+
+def test_strong_analytics_auth_taxonomy_nutrition_and_dedupe(tmp_path: Path) -> None:
+    client = _client(tmp_path)
+    csv_body = """Date,Workout Name,Duration,Exercise Name,Set Order,Weight,Reps,Distance,Seconds,Notes,Workout Notes,RPE
+2026-05-01 10:00:00,Push Day,1h 5m,Bench Press (Barbell),1,80,5,0,0,,,8
+2026-05-01 10:00:00,Push Day,1h 5m,Bench Press (Barbell),2,82.5,4,0,0,,,9
+2026-05-02 11:00:00,Pull Day,50m,Lat Pulldown (Cable),1,70,10,0,0,,felt good,8
+2026-05-02 11:00:00,Pull Day,50m,Odd Lift,1,25,12,0,0,,,7
+"""
+    try:
+        client.post("/v1/ingest/health-auto-export", json=_payload(), headers=_auth())
+        assert client.post("/v1/strong/import", files={"file": ("strong.csv", csv_body, "text/csv")}, headers=_auth()).status_code == 200
+        assert client.post("/v1/strong/import", files={"file": ("strong.csv", csv_body, "text/csv")}, headers=_auth()).status_code == 200
+
+        assert client.get("/v1/strong/analytics?start=2026-05-01&end=2026-05-02").status_code == 401
+        invalid = client.get("/v1/strong/analytics?start=2026-05-02&end=2026-05-01", headers=_auth())
+        assert invalid.status_code == 422
+
+        response = client.get("/v1/strong/analytics?start=2026-05-01&end=2026-05-02", headers=_auth())
+        assert response.status_code == 200
+        body = response.json()
+        assert body["totals"]["sessions"] == 2
+        assert body["totals"]["working_sets"] == 4
+        assert body["totals"]["total_volume"] == 80 * 5 + 82.5 * 4 + 70 * 10 + 25 * 12
+        assert body["weekly_load"][0]["pr_count"] == 4
+        assert body["weekly_load"][0]["avg_calories"] == 1350
+        assert body["exercise_taxonomy"]["Bench Press (Barbell)"]["primary_group"] == "Chest"
+        assert body["exercise_taxonomy"]["Odd Lift"]["primary_group"] == "Other"
+        assert any(item["group"] == "Back" for item in body["group_balance"])
+        assert body["nutrition_training_days"][0]["calories"] == 2200
+        assert body["nutrition_training_days"][1]["prior_protein"] == 180
+        assert any(item["timing"] == "prior_day" and item["nutrient"] == "protein" for item in body["nutrition_correlations"])
+    finally:
+        _clear_overrides()
+
+
+def test_classify_strong_exercise_known_and_unknown() -> None:
+    assert classify_strong_exercise("Bench Press (Barbell)").primary_group == "Chest"
+    assert classify_strong_exercise("Lat Pulldown (Cable)").movement_pattern == "Vertical Pull"
+    assert classify_strong_exercise("Mystery Raise").primary_group == "Other"
 
 
 def test_strong_csv_import_requires_nutrition_and_columns(tmp_path: Path) -> None:

@@ -250,6 +250,110 @@ export interface StrongExerciseDetailResponse {
   sessions: StrongSessionRecord[];
 }
 
+export interface StrongExerciseTaxonomy {
+  movement_pattern: string;
+  primary_group: string;
+  secondary_groups: string[];
+}
+
+export interface StrongAnalyticsTotals {
+  sessions: number;
+  working_sets: number;
+  total_volume: number;
+  duration_seconds: number;
+  exercises: number;
+  pr_count: number;
+}
+
+export interface StrongWeeklyLoad {
+  week_start: string;
+  session_count: number;
+  working_set_count: number;
+  total_volume: number;
+  duration_seconds: number;
+  exercise_count: number;
+  pr_count: number;
+  avg_calories: number | null;
+  avg_protein: number | null;
+  avg_carbohydrates: number | null;
+  avg_fat: number | null;
+}
+
+export interface StrongGroupBalance {
+  group: string;
+  movement_pattern: string;
+  sessions: number;
+  working_sets: number;
+  total_volume: number;
+  estimated_1rm_prs: number;
+}
+
+export interface StrongNutritionTrainingDay {
+  date: string;
+  session_volume: number;
+  working_sets: number;
+  duration_seconds: number;
+  pr_count: number;
+  calories: number | null;
+  protein: number | null;
+  carbohydrates: number | null;
+  fat: number | null;
+  weight: number | null;
+  active_energy: number | null;
+  prior_calories: number | null;
+  prior_protein: number | null;
+  prior_carbohydrates: number | null;
+  prior_fat: number | null;
+  prior_weight: number | null;
+  prior_active_energy: number | null;
+}
+
+export interface StrongNutritionCorrelation {
+  nutrient: string;
+  driver: string;
+  timing: string;
+  sample_count: number;
+  correlation: number | null;
+  average_on_pr_days: number | null;
+  average_on_non_pr_training_days: number | null;
+}
+
+export interface StrongTrainingRestDelta {
+  metric: string;
+  training_average: number | null;
+  rest_average: number | null;
+  delta: number | null;
+}
+
+export interface StrongRecoveryLoadMarkers {
+  high_volume_weeks: Array<{
+    week_start: string;
+    total_volume: number;
+    session_count: number;
+    working_set_count: number;
+  }>;
+  low_protein_training_days: Array<{
+    date: string;
+    protein: number | null;
+    session_volume: number;
+    working_sets: number;
+  }>;
+  training_rest_deltas: StrongTrainingRestDelta[];
+}
+
+export interface StrongAnalyticsResponse {
+  start: string | null;
+  end: string | null;
+  nutrition_start_date: string | null;
+  totals: StrongAnalyticsTotals;
+  weekly_load: StrongWeeklyLoad[];
+  group_balance: StrongGroupBalance[];
+  exercise_taxonomy: Record<string, StrongExerciseTaxonomy>;
+  nutrition_training_days: StrongNutritionTrainingDay[];
+  nutrition_correlations: StrongNutritionCorrelation[];
+  recovery_load_markers: StrongRecoveryLoadMarkers;
+}
+
 export type SummaryField = "calories" | "protein" | "carbohydrates" | "fat" | "water" | "weight" | "steps" | "active_energy";
 
 export interface FieldMeta {
