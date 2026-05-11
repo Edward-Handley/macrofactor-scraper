@@ -29,6 +29,7 @@ from macrofactor_scraper.models import (
     MetricDateDiagnosticResponse,
     MetricListResponse,
     MetricRecordsResponse,
+    RepairReport,
     WorkoutListResponse,
 )
 
@@ -156,6 +157,20 @@ async def logout() -> Response:
     response = RedirectResponse("/login", status_code=303)
     response.delete_cookie(SESSION_COOKIE_NAME)
     return response
+
+
+@app.post("/v1/admin/repair", response_model=RepairReport)
+async def admin_repair(
+    date: date,
+    dry_run: bool = True,
+    x_api_key: str | None = Header(default=None),
+    settings: Settings = Depends(get_settings),
+    service: HealthAutoExportService = Depends(get_health_export_service),
+) -> RepairReport:
+    if not settings.ingest_api_key or x_api_key != settings.ingest_api_key:
+        raise HTTPException(status_code=401, detail="Invalid admin API key")
+    backup_dir = Path(settings.sqlite_path).parent / "repair_backups"
+    return service.repair_running_totals(date, date, dry_run=dry_run, backup_dir=backup_dir)
 
 
 @app.post("/v1/ingest/health-auto-export", response_model=IngestResponse)
@@ -395,6 +410,13 @@ def _csv_rows_response(rows: list[dict[str, object]], fieldnames: list[str], fil
     for row in rows:
         writer.writerow({field: "" if row.get(field) is None else row.get(field) for field in fieldnames})
     return _csv_response(output.getvalue(), filename)
+
+
+@app.get("/{full_path:path}")
+async def spa_fallback(full_path: str, request: Request, settings: Settings = Depends(get_settings)) -> Response:
+    if not _verify_session(request.cookies.get(SESSION_COOKIE_NAME), settings):
+        return RedirectResponse("/login", status_code=303)
+    return HTMLResponse(_read_static("dashboard.html"))
 
 
 def _read_static(filename: str, *, error: str | None = None) -> str:

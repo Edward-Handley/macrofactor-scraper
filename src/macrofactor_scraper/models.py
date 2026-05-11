@@ -142,6 +142,7 @@ class MetricDateDiagnosticItem(BaseModel):
     row_count: int
     summed_value: float | None = None
     replacement_value: float | None = None
+    collapsed_value: float | None = None
     first_record_id: int
     latest_record_id: int
     first_timestamp: dt.datetime | None = None
@@ -178,3 +179,20 @@ class WorkoutRecord(BaseModel):
 class WorkoutListResponse(BaseModel):
     count: int
     workouts: list[WorkoutRecord]
+
+
+class RepairDayDelta(BaseModel):
+    date: dt.date
+    metric_name: str
+    source: str | None = None
+    before_total: float
+    after_total: float
+    removed_row_ids: list[int]
+
+
+class RepairReport(BaseModel):
+    dry_run: bool
+    groups_inspected: int
+    rows_removed: int
+    backup_path: str | None = None
+    deltas: list[RepairDayDelta]

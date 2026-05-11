@@ -5,7 +5,7 @@ import json
 import sqlite3
 from collections.abc import Iterable
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, time
 from pathlib import Path
 from typing import Any
 
@@ -31,6 +31,7 @@ from macrofactor_scraper.models import (
 
 SUMMARY_FIELDS = ("calories", "protein", "carbohydrates", "fat", "water", "weight", "steps", "active_energy")
 REPLACEMENT_SUMMARY_KEYS = {"weight"}
+RUNNING_TOTAL_SUMMARY_KEYS = {"calories", "protein", "carbohydrates", "fat", "water", "active_energy"}
 
 
 @dataclass(frozen=True)
@@ -273,7 +274,16 @@ class HealthAutoExportService:
                 _summary_quantity(key, latest_row["units"], float(latest_row["quantity"])) if key and latest_row["quantity"] is not None else latest_row["quantity"]
             )
             summed_value = sum(numeric_values) if numeric_values else None
-            suspicious = aggregation == "replacement" and len(group_rows) > 1 and summed_value != replacement_value
+            collapsed_value: float | None = None
+            if key is not None:
+                if aggregation == "replacement":
+                    collapsed_value = replacement_value
+                else:
+                    collapsed_value = _collapse_additive_rows(group_rows, key)
+            suspicious = (
+                (aggregation == "replacement" and len(group_rows) > 1 and summed_value != replacement_value)
+                or (aggregation == "additive" and collapsed_value is not None and summed_value is not None and abs(collapsed_value - summed_value) > 0.01)
+            )
             diagnostics.append(
                 MetricDateDiagnosticItem(
                     metric_name=metric_name,
@@ -284,6 +294,7 @@ class HealthAutoExportService:
                     row_count=len(group_rows),
                     summed_value=summed_value,
                     replacement_value=replacement_value,
+                    collapsed_value=collapsed_value,
                     first_record_id=int(group_rows[0]["id"]),
                     latest_record_id=int(latest_row["id"]),
                     first_timestamp=_parse_datetime(group_rows[0]["timestamp"]),
@@ -316,13 +327,19 @@ class HealthAutoExportService:
         with self._connect() as conn:
             rows = conn.execute(query, params).fetchall()
 
-        additive_totals: dict[date, dict[str, float]] = {}
-        replacement_rows: dict[tuple[date, str, str, str | None], sqlite3.Row] = {}
         hidden_fields = set() if include_hidden else set(_effective_hidden_fields(preferences))
         untrusted_metric_names = set(preferences.untrusted_metric_names) if preferences is not None else set()
         trusted_metric_names = set(preferences.trusted_metric_names) if preferences is not None else set()
         source_filters = preferences.source_filters if preferences is not None else {}
+
+        # Bucket rows by (date, summary_key, source) for collapse logic.
+        # Replacement metrics (weight) go into a separate bucket for latest-wins.
+        additive_buckets: dict[tuple[date, str, str | None], list[sqlite3.Row]] = {}
+        replacement_rows: dict[tuple[date, str, str | None], sqlite3.Row] = {}
+        # Dedup guard for exact-duplicate rows that share (metric, units, date, timestamp,
+        # source, quantity) — handles legacy rows inserted with different fingerprints.
         seen_records: set[tuple[str, str | None, str | None, str | None, str | None, float]] = set()
+
         for row in rows:
             day = _parse_date(row["record_date"])
             if day is None:
@@ -335,44 +352,45 @@ class HealthAutoExportService:
             allowed_sources = source_filters.get(metric_name)
             if allowed_sources and row["source"] not in allowed_sources:
                 continue
-            key = _summary_key(row["metric_name"])
+            key = _summary_key(metric_name)
             if key is None or key in hidden_fields:
                 continue
-            quantity = _summary_quantity(key, row["units"], float(row["quantity"]))
-            if quantity is None:
-                continue
-            logical_record = (
-                metric_name,
-                row["units"],
-                row["record_date"],
-                row["timestamp"],
-                row["source"],
-                float(row["quantity"]),
-            )
-            if logical_record in seen_records:
-                continue
-            seen_records.add(logical_record)
-            if _summary_aggregation(key) == "replacement":
-                source = row["source"] or ""
-                replacement_key = (day, key, metric_name, source)
-                current = replacement_rows.get(replacement_key)
-                if current is None or _metric_row_sort_key(row) > _metric_row_sort_key(current):
-                    replacement_rows[replacement_key] = row
-                continue
-            additive_totals.setdefault(day, {})[key] = additive_totals.setdefault(day, {}).get(key, 0.0) + quantity
 
-        summaries: dict[date, dict[str, float]] = {day: values.copy() for day, values in additive_totals.items()}
-        latest_weight_rows: dict[date, sqlite3.Row] = {}
-        for (day, key, _metric_name, _source), row in replacement_rows.items():
-            quantity = _summary_quantity(key, row["units"], float(row["quantity"]))
-            if quantity is None:
+            source = row["source"]
+
+            dedup_key = (metric_name, row["units"], row["record_date"], row["timestamp"], source, float(row["quantity"]))
+            if dedup_key in seen_records:
                 continue
+            seen_records.add(dedup_key)
+
+            if _summary_aggregation(key) == "replacement":
+                bucket_key = (day, key, source)
+                current = replacement_rows.get(bucket_key)
+                if current is None or _metric_row_sort_key(row) > _metric_row_sort_key(current):
+                    replacement_rows[bucket_key] = row
+            else:
+                additive_buckets.setdefault((day, key, source), []).append(row)
+
+        # Collapse each additive bucket: latest midnight snapshot wins per source,
+        # else sum intraday rows. Then accumulate across sources per (day, key).
+        summaries: dict[date, dict[str, float]] = {}
+        for (day, key, _source), bucket_rows in additive_buckets.items():
+            value = _collapse_additive_rows(bucket_rows, key)
+            day_totals = summaries.setdefault(day, {})
+            day_totals[key] = day_totals.get(key, 0.0) + value
+
+        # Collapse replacement metrics: one latest row per day wins.
+        latest_weight_rows: dict[date, sqlite3.Row] = {}
+        for (day, key, _source), row in replacement_rows.items():
             if key == "weight":
                 current = latest_weight_rows.get(day)
                 if current is None or _metric_row_sort_key(row) > _metric_row_sort_key(current):
                     latest_weight_rows[day] = row
-                continue
-            summaries.setdefault(day, {})[key] = summaries.setdefault(day, {}).get(key, 0.0) + quantity
+            else:
+                quantity = _summary_quantity(key, row["units"], float(row["quantity"]))
+                if quantity is not None:
+                    day_totals = summaries.setdefault(day, {})
+                    day_totals[key] = day_totals.get(key, 0.0) + quantity
 
         for day, row in latest_weight_rows.items():
             quantity = _summary_quantity("weight", row["units"], float(row["quantity"]))
@@ -416,6 +434,118 @@ class HealthAutoExportService:
             workout_record_count=int(workouts["count"]),
             first_date=_parse_date(metrics["first_date"]),
             last_date=_parse_date(metrics["last_date"]),
+        )
+
+    def repair_running_totals(
+        self,
+        start: date | None,
+        end: date | None,
+        *,
+        dry_run: bool,
+        backup_dir: Path | None = None,
+    ) -> "RepairReport":
+        from macrofactor_scraper.models import RepairDayDelta, RepairReport  # local import avoids circular
+
+        self._ensure_schema()
+        query = """
+        SELECT id, metric_name, units, record_date, timestamp, quantity, source, raw_json, fingerprint, batch_id
+        FROM health_records
+        WHERE quantity IS NOT NULL
+        """
+        params: list[Any] = []
+        if start is not None:
+            query += " AND record_date >= ?"
+            params.append(start.isoformat())
+        if end is not None:
+            query += " AND record_date <= ?"
+            params.append(end.isoformat())
+        with self._connect() as conn:
+            rows = conn.execute(query, params).fetchall()
+
+        # Only operate on metrics that map to RUNNING_TOTAL_SUMMARY_KEYS
+        groups: dict[tuple[str, str | None], list[sqlite3.Row]] = {}
+        for row in rows:
+            key = _summary_key(row["metric_name"])
+            if key not in RUNNING_TOTAL_SUMMARY_KEYS:
+                continue
+            group_key = (row["record_date"], row["metric_name"], row["source"])
+            groups.setdefault(group_key, []).append(row)  # type: ignore[arg-type]
+
+        to_delete: list[int] = []
+        backup_rows: list[dict[str, Any]] = []
+        deltas: list[RepairDayDelta] = []
+
+        for (record_date, metric_name, source), group_rows in sorted(groups.items()):
+            midnight = [r for r in group_rows if _is_midnight_summary(r["timestamp"])]
+            intraday = [r for r in group_rows if not _is_midnight_summary(r["timestamp"])]
+
+            if len(midnight) <= 1 and not (midnight and intraday):
+                continue  # nothing to clean
+
+            key = _summary_key(metric_name)
+            before_ids = [int(r["id"]) for r in group_rows]
+            before_total = sum(
+                q for r in group_rows
+                for q in [_summary_quantity(key, r["units"], float(r["quantity"])) if key else float(r["quantity"])]
+                if q is not None
+            )
+
+            keep_ids: set[int] = set()
+            if midnight:
+                best = max(midnight, key=_metric_row_sort_key)
+                keep_ids.add(int(best["id"]))
+            else:
+                for r in intraday:
+                    keep_ids.add(int(r["id"]))
+
+            remove_ids = [rid for rid in before_ids if rid not in keep_ids]
+            if not remove_ids:
+                continue
+
+            kept_rows = [r for r in group_rows if int(r["id"]) in keep_ids]
+            after_total = sum(
+                q for r in kept_rows
+                for q in [_summary_quantity(key, r["units"], float(r["quantity"])) if key else float(r["quantity"])]
+                if q is not None
+            )
+
+            to_delete.extend(remove_ids)
+            backup_rows.extend(
+                {"id": int(r["id"]), "metric_name": r["metric_name"], "units": r["units"],
+                 "record_date": r["record_date"], "timestamp": r["timestamp"],
+                 "quantity": r["quantity"], "source": r["source"],
+                 "raw_json": r["raw_json"], "fingerprint": r["fingerprint"], "batch_id": r["batch_id"]}
+                for r in group_rows if int(r["id"]) in set(remove_ids)
+            )
+            day = _parse_date(record_date)
+            if day is not None:
+                deltas.append(RepairDayDelta(
+                    date=day, metric_name=metric_name, source=source,
+                    before_total=before_total, after_total=after_total, removed_row_ids=remove_ids,
+                ))
+
+        backup_path: str | None = None
+        if not dry_run and to_delete:
+            import datetime as _dt
+            import json as _json
+
+            if backup_dir is not None:
+                backup_dir.mkdir(parents=True, exist_ok=True)
+                ts = _dt.datetime.now().strftime("%Y%m%d_%H%M%S")
+                backup_file = backup_dir / f"repair_backup_{ts}.json"
+                backup_file.write_text(_json.dumps(backup_rows, default=str, indent=2))
+                backup_path = str(backup_file)
+
+            placeholders = ",".join("?" * len(to_delete))
+            with self._connect() as conn:
+                conn.execute(f"DELETE FROM health_records WHERE id IN ({placeholders})", to_delete)
+
+        return RepairReport(
+            dry_run=dry_run,
+            groups_inspected=len(groups),
+            rows_removed=len(to_delete) if not dry_run else 0,
+            backup_path=backup_path,
+            deltas=deltas,
         )
 
     def close(self) -> None:
@@ -469,6 +599,8 @@ class HealthAutoExportService:
                     preferences_json TEXT NOT NULL,
                     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
                 );
+                CREATE INDEX IF NOT EXISTS idx_health_records_date_metric_source
+                    ON health_records (record_date, metric_name, source);
                 """
             )
         self._initialized = True
@@ -709,6 +841,44 @@ def _metric_row_sort_key(row: sqlite3.Row) -> tuple[str, int]:
 
 def _latest_metric_row(rows: list[sqlite3.Row]) -> sqlite3.Row:
     return max(rows, key=_metric_row_sort_key)
+
+
+def _is_midnight_summary(timestamp_text: str | None) -> bool:
+    """Return True when the stored timestamp represents an explicit midnight in a known TZ.
+
+    HAE emits daily-summary rows at midnight with a full TZ offset (e.g. "2026-05-06T00:00:00+08:00").
+    Records parsed from bare date strings (e.g. "2026-05-06") store as "2026-05-06T00:00:00" with
+    no tzinfo — we treat those as intraday so they're still summed across batches.
+    """
+    if not timestamp_text:
+        return False
+    ts = _parse_datetime(timestamp_text)
+    if ts is None or ts.tzinfo is None:
+        return False
+    return ts.time() == time(0, 0, 0)
+
+
+def _collapse_additive_rows(rows: list[sqlite3.Row], key: str) -> float:
+    """Collapse a (date, key, source) group into a single value.
+
+    If midnight snapshot rows exist (daily running-total from MacroFactor/HAE),
+    return the LATEST snapshot's quantity only — using max(timestamp, id) so
+    a corrected lower value wins over a stale higher one.
+    Otherwise sum all intraday quantities.
+    """
+    midnight = [r for r in rows if _is_midnight_summary(r["timestamp"])]
+    intraday = [r for r in rows if not _is_midnight_summary(r["timestamp"])]
+
+    if midnight:
+        best = max(midnight, key=_metric_row_sort_key)
+        q = _summary_quantity(key, best["units"], float(best["quantity"]))
+        return q if q is not None else 0.0
+    return sum(
+        q
+        for r in intraday
+        for q in [_summary_quantity(key, r["units"], float(r["quantity"]))]
+        if q is not None
+    )
 
 
 def _normalize_preferences(preferences: DashboardPreferences) -> DashboardPreferences:

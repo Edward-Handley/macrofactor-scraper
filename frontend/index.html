@@ -1,11 +1,21 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" class="dark">
   <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Health Export Dashboard</title>
+    <title>Health Dashboard</title>
+    <script>
+      // Apply saved theme before first paint to avoid flash
+      try {
+        const t = localStorage.getItem("theme");
+        if (t === "light") document.documentElement.classList.remove("dark");
+        else if (t === "dark") document.documentElement.classList.add("dark");
+        else if (window.matchMedia("(prefers-color-scheme: light)").matches)
+          document.documentElement.classList.remove("dark");
+      } catch (_) {}
+    </script>
   </head>
-  <body>
+  <body class="bg-zinc-950 text-zinc-100 antialiased">
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>

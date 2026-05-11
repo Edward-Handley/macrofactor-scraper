@@ -110,11 +110,22 @@ Configure Health Auto Export:
 - URL: your local or tunneled `/v1/ingest/health-auto-export` endpoint.
 - Header: `X-API-Key: <HEALTH_EXPORT_API_KEY>`.
 - Date range: use "Since Last Sync" for ongoing sync and Manual Export for history.
-- Cadence: run nutrition exports after MacroFactor has finished writing the prior day, such as daily at about 3:00 AM local phone time. If you want same-day updates, use a moderate cadence such as every 2-4 hours.
+- Cadence: any cadence works, including hourly. The server handles running-total deduplication automatically.
 
 For iPhone testing, run the API locally on `127.0.0.1:8000` and expose it temporarily with a tunnel such as Cloudflare Tunnel or ngrok. iOS background exports can be delayed when the phone is locked, Background App Refresh is unavailable, or Low Power Mode is enabled.
 
-Nutrition summary fields from MacroFactor are summed from unique same-day data points. Repeated exports with the same logical record are deduplicated, while new same-day calorie and macro points are added to the daily total. To inspect a suspicious day, call `/v1/diagnostics/metrics/YYYY-MM-DD` with the read API key and compare row counts, summed values, and source details.
+Nutrition summary fields (calories, protein, carbs, fat, water, active energy) are aggregated per `(date, metric, source)`. When HealthAutoExport sends hourly syncs, MacroFactor writes an updated running-total row at midnight for that day — only the **latest midnight snapshot** for each source is used; earlier snapshots from the same hourly run and any intraday meal-event rows from the same source are ignored. When no midnight snapshot exists, intraday events are summed. Per-day totals are then summed across sources. Weight uses latest-wins.
+
+To inspect a suspicious day, call `/v1/diagnostics/metrics/YYYY-MM-DD` with the read API key. The response includes `collapsed_value` (what the summary actually uses) and flags `suspicious: true` when the collapsed value differs from the naive sum.
+
+To retroactively clean up stacked rows from before this fix, use the repair CLI:
+
+```powershell
+python -m macrofactor_scraper.repair --dry-run
+python -m macrofactor_scraper.repair --apply
+```
+
+Or call `POST /v1/admin/repair?date=YYYY-MM-DD&dry_run=false` with the ingest API key to repair a single day from the Data Health dashboard.
 
 ## Storage
 

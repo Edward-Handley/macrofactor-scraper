@@ -1,5 +1,6 @@
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 
 from macrofactor_scraper.api import app, get_health_export_service
@@ -334,6 +335,7 @@ def test_metric_date_diagnostics_reports_additive_nutrition_points(tmp_path: Pat
         assert diagnostics["dietary_energy"]["row_count"] == 2
         assert diagnostics["dietary_energy"]["summed_value"] == 3500
         assert diagnostics["dietary_energy"]["replacement_value"] == 2300
+        assert diagnostics["dietary_energy"]["collapsed_value"] == 3500
         assert diagnostics["dietary_energy"]["suspicious"] is False
         assert diagnostics["body_mass"]["aggregation"] == "replacement"
     finally:
@@ -397,6 +399,138 @@ def test_ingest_status_dashboard_summary_and_exports_require_auth(tmp_path: Path
         metric_csv = client.get("/v1/export/metrics/protein.csv", headers=_auth())
         assert metric_csv.status_code == 200
         assert "metric_name" in metric_csv.text
+    finally:
+        _clear_overrides()
+
+
+def test_daily_summary_collapses_midnight_running_totals_to_latest_snapshot(tmp_path: Path) -> None:
+    """Six hourly HAE syncs for the same day produce six midnight-snapshot rows.
+    The summary must return the latest snapshot (2395.60), not the sum (9175.76).
+    The raw rows are still all stored in health_records.
+    """
+    client = _client(tmp_path)
+    try:
+        quantities = [616.29, 1062.45, 1176.69, 1745.02, 2180.76, 2395.60]
+        for qty in quantities:
+            payload = {
+                "data": {
+                    "metrics": [
+                        {
+                            "name": "dietary_energy",
+                            "units": "kcal",
+                            "data": [{"qty": qty, "date": "2026-05-07T00:00:00+08:00", "source": "MacroFactor"}],
+                        }
+                    ]
+                }
+            }
+            assert client.post("/v1/ingest/health-auto-export", json=payload, headers=_auth()).status_code == 200
+
+        summary_resp = client.get("/v1/daily-summary?start=2026-05-07&end=2026-05-07", headers=_auth())
+        assert summary_resp.status_code == 200
+        assert summary_resp.json()["summaries"][0]["calories"] == pytest.approx(2395.60)
+
+        records_resp = client.get("/v1/metrics/dietary_energy?start=2026-05-07&end=2026-05-07", headers=_auth())
+        assert records_resp.json()["count"] == 6
+    finally:
+        _clear_overrides()
+
+
+def test_daily_summary_prefers_midnight_over_intraday_same_source(tmp_path: Path) -> None:
+    """When midnight summary + intraday meal rows coexist for the same source,
+    the midnight row wins (it is the canonical daily total from MacroFactor).
+    """
+    client = _client(tmp_path)
+    try:
+        midnight_payload = {
+            "data": {
+                "metrics": [
+                    {
+                        "name": "dietary_energy",
+                        "units": "kcal",
+                        "data": [{"qty": 1814.02, "date": "2026-05-05T00:00:00+08:00", "source": "MacroFactor"}],
+                    }
+                ]
+            }
+        }
+        intraday_payload = {
+            "data": {
+                "metrics": [
+                    {
+                        "name": "dietary_energy",
+                        "units": "kcal",
+                        "data": [
+                            {"qty": 181.74, "date": "2026-05-05T05:00:00+08:00", "source": "MacroFactor"},
+                            {"qty": 98.23, "date": "2026-05-05T07:00:00+08:00", "source": "MacroFactor"},
+                            {"qty": 381.46, "date": "2026-05-05T09:28:00+08:00", "source": "MacroFactor"},
+                            {"qty": 227.55, "date": "2026-05-05T13:09:00+08:00", "source": "MacroFactor"},
+                            {"qty": 214.08, "date": "2026-05-05T18:01:00+08:00", "source": "MacroFactor"},
+                        ],
+                    }
+                ]
+            }
+        }
+        assert client.post("/v1/ingest/health-auto-export", json=midnight_payload, headers=_auth()).status_code == 200
+        assert client.post("/v1/ingest/health-auto-export", json=intraday_payload, headers=_auth()).status_code == 200
+
+        summary_resp = client.get("/v1/daily-summary?start=2026-05-05&end=2026-05-05", headers=_auth())
+        assert summary_resp.status_code == 200
+        assert summary_resp.json()["summaries"][0]["calories"] == pytest.approx(1814.02)
+    finally:
+        _clear_overrides()
+
+
+def test_daily_summary_sums_intraday_when_no_midnight_present(tmp_path: Path) -> None:
+    """When only intraday rows exist (no midnight summary), they must still be summed."""
+    client = _client(tmp_path)
+    try:
+        payload = {
+            "data": {
+                "metrics": [
+                    {
+                        "name": "dietary_energy",
+                        "units": "kcal",
+                        "data": [
+                            {"qty": 900.0, "date": "2026-05-08T08:00:00+08:00", "source": "MacroFactor"},
+                            {"qty": 700.0, "date": "2026-05-08T13:00:00+08:00", "source": "MacroFactor"},
+                            {"qty": 600.0, "date": "2026-05-08T19:00:00+08:00", "source": "MacroFactor"},
+                        ],
+                    }
+                ]
+            }
+        }
+        assert client.post("/v1/ingest/health-auto-export", json=payload, headers=_auth()).status_code == 200
+
+        summary_resp = client.get("/v1/daily-summary?start=2026-05-08&end=2026-05-08", headers=_auth())
+        assert summary_resp.status_code == 200
+        assert summary_resp.json()["summaries"][0]["calories"] == pytest.approx(2200.0)
+    finally:
+        _clear_overrides()
+
+
+def test_metric_date_diagnostics_flags_running_total_stacking_as_suspicious(tmp_path: Path) -> None:
+    """Two midnight rows for the same source on the same day are suspicious for an additive metric."""
+    client = _client(tmp_path)
+    try:
+        for qty in [616.29, 2395.60]:
+            payload = {
+                "data": {
+                    "metrics": [
+                        {
+                            "name": "dietary_energy",
+                            "units": "kcal",
+                            "data": [{"qty": qty, "date": "2026-05-07T00:00:00+08:00", "source": "MacroFactor"}],
+                        }
+                    ]
+                }
+            }
+            assert client.post("/v1/ingest/health-auto-export", json=payload, headers=_auth()).status_code == 200
+
+        response = client.get("/v1/diagnostics/metrics/2026-05-07", headers=_auth())
+        assert response.status_code == 200
+        diag = {item["metric_name"]: item for item in response.json()["diagnostics"]}
+        assert diag["dietary_energy"]["suspicious"] is True
+        assert diag["dietary_energy"]["collapsed_value"] == pytest.approx(2395.60)
+        assert diag["dietary_energy"]["summed_value"] == pytest.approx(616.29 + 2395.60)
     finally:
         _clear_overrides()
 

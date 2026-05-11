@@ -1,0 +1,41 @@
+@import "tailwindcss";
+
+@theme {
+  --color-brand: oklch(0.65 0.15 165);
+  --color-brand-dim: oklch(0.55 0.12 165);
+  --color-calories: oklch(0.72 0.18 55);
+  --color-protein: oklch(0.65 0.15 165);
+  --color-carbs: oklch(0.68 0.14 250);
+  --color-fat: oklch(0.72 0.16 290);
+  --color-water: oklch(0.7 0.12 210);
+  --color-weight: oklch(0.7 0.15 0);
+  --color-active: oklch(0.7 0.15 95);
+  --color-steps: oklch(0.72 0.14 200);
+}
+
+/* Dark mode chart theming */
+.recharts-cartesian-grid line {
+  stroke: oklch(0.25 0 0) !important;
+}
+.recharts-text {
+  fill: oklch(0.55 0 0) !important;
+  font-size: 11px !important;
+}
+.dark .recharts-tooltip-wrapper .recharts-default-tooltip {
+  background: oklch(0.15 0 0) !important;
+  border-color: oklch(0.25 0 0) !important;
+  color: oklch(0.9 0 0) !important;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: oklch(0.3 0 0); border-radius: 3px; }
+
+/* Smooth transitions for theme switch */
+*, *::before, *::after {
+  transition: background-color 0.15s ease, border-color 0.15s ease;
+}
+button, a, input, select {
+  transition: all 0.1s ease;
+}
