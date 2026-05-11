@@ -10,6 +10,7 @@ import type {
   StrongImportListResponse,
   StrongImportResponse,
   StrongSessionListResponse,
+  StrongSessionRecord,
   StrongSummaryResponse,
   WorkoutListResponse,
 } from "./types";
@@ -67,6 +68,8 @@ export const api = {
       request<StrongAnalyticsResponse>(`/v1/strong/analytics?start=${start}&end=${end}`),
     sessions: (start: string, end: string) =>
       request<StrongSessionListResponse>(`/v1/strong/sessions?start=${start}&end=${end}`),
+    session: (sessionId: number) =>
+      request<StrongSessionRecord>(`/v1/strong/sessions/${sessionId}`),
     exercise: (exerciseName: string, start: string, end: string) =>
       request<StrongExerciseDetailResponse>(
         `/v1/strong/exercises/${encodeURIComponent(exerciseName)}?start=${start}&end=${end}`

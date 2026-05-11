@@ -37,6 +37,7 @@ from macrofactor_scraper.models import (
     StrongImportListResponse,
     StrongImportResponse,
     StrongSessionListResponse,
+    StrongSessionRecord,
     StrongSummaryResponse,
     WorkoutListResponse,
 )
@@ -367,6 +368,17 @@ async def strong_sessions(
         return service.strong_sessions(start, end)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.get("/v1/strong/sessions/{session_id}", response_model=StrongSessionRecord, dependencies=[Depends(require_private_access)])
+async def strong_session_detail(
+    session_id: int,
+    service: HealthAutoExportService = Depends(get_health_export_service),
+) -> StrongSessionRecord:
+    session = service.strong_session_detail(session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Strong session not found")
+    return session
 
 
 @app.get("/v1/strong/exercises/{exercise_name}", response_model=StrongExerciseDetailResponse, dependencies=[Depends(require_private_access)])

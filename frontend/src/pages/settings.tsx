@@ -162,6 +162,16 @@ export function Settings() {
             untrusted_metric_names: [],
             default_chart_set: ["calories", "protein", "carbohydrates", "fat", "active_energy"],
             source_filters: {},
+            workout_preferences: {
+              default_range_days: 90,
+              landing_tab: "Overview",
+              visible_workout_cards: ["sessions", "volume", "prs", "protein", "calorie_delta", "load_trend"],
+              default_charts: ["training_heatmap", "weekly_group_load", "nutrition_scatter", "group_balance"],
+              pinned_exercises: [],
+              default_group_filter: "All",
+              default_exercise_sort: "recent_pr",
+              show_import_panel: true,
+            },
           })}
           className="px-4 py-2 border border-zinc-700 text-zinc-400 hover:text-zinc-100 hover:border-zinc-500 rounded-xl text-sm font-semibold transition-colors"
         >

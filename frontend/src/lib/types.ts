@@ -27,6 +27,18 @@ export interface Preferences {
   untrusted_metric_names: string[];
   default_chart_set: string[];
   source_filters: Record<string, string[]>;
+  workout_preferences: WorkoutPreferences;
+}
+
+export interface WorkoutPreferences {
+  default_range_days: number;
+  landing_tab: WorkoutTab;
+  visible_workout_cards: string[];
+  default_charts: string[];
+  pinned_exercises: string[];
+  default_group_filter: string;
+  default_exercise_sort: string;
+  show_import_panel: boolean;
 }
 
 export interface MetricCatalogItem {
@@ -308,6 +320,41 @@ export interface StrongNutritionTrainingDay {
   prior_active_energy: number | null;
 }
 
+export interface StrongDailyLoad {
+  date: string;
+  session_count: number;
+  total_volume: number;
+  working_sets: number;
+  duration_seconds: number;
+  pr_count: number;
+  groups_trained: string[];
+}
+
+export interface StrongWeeklyGroupLoad {
+  week_start: string;
+  group: string;
+  total_volume: number;
+  working_sets: number;
+  session_count: number;
+}
+
+export interface StrongExercisePr {
+  exercise_name: string;
+  date: string;
+  weight: number | null;
+  reps: number | null;
+  estimated_1rm: number | null;
+  session_id: number;
+}
+
+export interface StrongFilterOptions {
+  groups: string[];
+  movement_patterns: string[];
+  exercises: string[];
+  start_date: string | null;
+  end_date: string | null;
+}
+
 export interface StrongNutritionCorrelation {
   nutrient: string;
   driver: string;
@@ -349,10 +396,16 @@ export interface StrongAnalyticsResponse {
   weekly_load: StrongWeeklyLoad[];
   group_balance: StrongGroupBalance[];
   exercise_taxonomy: Record<string, StrongExerciseTaxonomy>;
+  daily_load: StrongDailyLoad[];
+  weekly_group_load: StrongWeeklyGroupLoad[];
+  exercise_prs: StrongExercisePr[];
+  filter_options: StrongFilterOptions;
   nutrition_training_days: StrongNutritionTrainingDay[];
   nutrition_correlations: StrongNutritionCorrelation[];
   recovery_load_markers: StrongRecoveryLoadMarkers;
 }
+
+export type WorkoutTab = "Overview" | "Sessions" | "Exercises" | "Nutrition" | "Customize";
 
 export type SummaryField = "calories" | "protein" | "carbohydrates" | "fat" | "water" | "weight" | "steps" | "active_energy";
 

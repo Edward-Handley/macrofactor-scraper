@@ -416,6 +416,13 @@ def test_strong_csv_import_filters_dedupes_and_summarizes(tmp_path: Path) -> Non
         sessions = client.get("/v1/strong/sessions?start=2026-05-01&end=2026-05-02", headers=_auth())
         assert sessions.status_code == 200
         assert sessions.json()["sessions"][1]["sets"][0]["is_warmup"] is True
+        session_id = sessions.json()["sessions"][0]["id"]
+        assert client.get(f"/v1/strong/sessions/{session_id}").status_code == 401
+        session_detail = client.get(f"/v1/strong/sessions/{session_id}", headers=_auth())
+        assert session_detail.status_code == 200
+        assert session_detail.json()["workout_name"] == "Pull Day"
+        assert len(session_detail.json()["sets"]) == 1
+        assert client.get("/v1/strong/sessions/999999", headers=_auth()).status_code == 404
 
         detail = client.get("/v1/strong/exercises/Bench%20Press%20%28Barbell%29?start=2026-05-01&end=2026-05-02", headers=_auth())
         assert detail.status_code == 200
@@ -449,6 +456,15 @@ def test_strong_analytics_auth_taxonomy_nutrition_and_dedupe(tmp_path: Path) -> 
         assert body["totals"]["total_volume"] == 80 * 5 + 82.5 * 4 + 70 * 10 + 25 * 12
         assert body["weekly_load"][0]["pr_count"] == 4
         assert body["weekly_load"][0]["avg_calories"] == 1350
+        assert body["daily_load"][0]["date"] == "2026-05-01"
+        assert body["daily_load"][0]["groups_trained"] == ["Chest"]
+        assert body["weekly_group_load"][0]["week_start"] == "2026-04-27"
+        assert any(item["group"] == "Chest" for item in body["weekly_group_load"])
+        assert body["exercise_prs"][0]["exercise_name"] == "Bench Press (Barbell)"
+        assert body["exercise_prs"][0]["session_id"] > 0
+        assert "Chest" in body["filter_options"]["groups"]
+        assert "Bench Press (Barbell)" in body["filter_options"]["exercises"]
+        assert body["filter_options"]["start_date"] == "2026-05-01"
         assert body["exercise_taxonomy"]["Bench Press (Barbell)"]["primary_group"] == "Chest"
         assert body["exercise_taxonomy"]["Odd Lift"]["primary_group"] == "Other"
         assert any(item["group"] == "Back" for item in body["group_balance"])
@@ -773,9 +789,26 @@ def test_dashboard_preferences_are_private_and_persist(tmp_path: Path) -> None:
         updated["hidden_summary_fields"] = ["water", "steps", "weight"]
         updated["visible_summary_cards"] = ["calories", "protein", "carbohydrates", "fat", "active_energy"]
         updated["preferred_range_days"] = 14
+        updated["workout_preferences"] = {
+            "default_range_days": 9999,
+            "landing_tab": "Bogus",
+            "visible_workout_cards": ["sessions", "bad-card"],
+            "default_charts": ["training_heatmap", "bad-chart"],
+            "pinned_exercises": ["Bench Press (Barbell)", "Bench Press (Barbell)", ""],
+            "default_group_filter": "",
+            "default_exercise_sort": "unknown",
+            "show_import_panel": False,
+        }
         response = client.put("/v1/dashboard/preferences", json=updated, headers=_auth())
         assert response.status_code == 200
         assert response.json()["hidden_summary_fields"] == ["water", "steps", "weight"]
+        assert response.json()["workout_preferences"]["default_range_days"] == 3650
+        assert response.json()["workout_preferences"]["landing_tab"] == "Overview"
+        assert response.json()["workout_preferences"]["visible_workout_cards"] == ["sessions"]
+        assert response.json()["workout_preferences"]["default_charts"] == ["training_heatmap"]
+        assert response.json()["workout_preferences"]["pinned_exercises"] == ["Bench Press (Barbell)"]
+        assert response.json()["workout_preferences"]["default_exercise_sort"] == "recent_pr"
+        assert response.json()["workout_preferences"]["show_import_panel"] is False
 
         persisted = client.get("/v1/dashboard/preferences", headers=_auth())
         assert persisted.status_code == 200

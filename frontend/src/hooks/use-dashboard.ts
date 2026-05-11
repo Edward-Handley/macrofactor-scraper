@@ -25,6 +25,11 @@ export function useUpdatePreferences() {
     onSuccess: (data) => {
       qc.setQueryData(["preferences"], data);
       qc.invalidateQueries({ queryKey: ["dashboard-summary"] });
+      qc.invalidateQueries({ queryKey: ["strong-summary"] });
+      qc.invalidateQueries({ queryKey: ["strong-analytics"] });
+      qc.invalidateQueries({ queryKey: ["strong-sessions"] });
+      qc.invalidateQueries({ queryKey: ["strong-session"] });
+      qc.invalidateQueries({ queryKey: ["strong-exercise"] });
     },
   });
 }
@@ -85,6 +90,15 @@ export function useStrongSessions(start: string, end: string) {
   });
 }
 
+export function useStrongSession(sessionId: number | null) {
+  return useQuery({
+    queryKey: ["strong-session", sessionId],
+    queryFn: () => api.strong.session(sessionId!),
+    enabled: sessionId != null,
+    staleTime: 60_000,
+  });
+}
+
 export function useStrongExercise(exerciseName: string | null, start: string, end: string) {
   return useQuery({
     queryKey: ["strong-exercise", exerciseName, start, end],
@@ -103,6 +117,7 @@ export function useImportStrongCsv() {
       qc.invalidateQueries({ queryKey: ["strong-summary"] });
       qc.invalidateQueries({ queryKey: ["strong-analytics"] });
       qc.invalidateQueries({ queryKey: ["strong-sessions"] });
+      qc.invalidateQueries({ queryKey: ["strong-session"] });
       qc.invalidateQueries({ queryKey: ["strong-exercise"] });
     },
   });

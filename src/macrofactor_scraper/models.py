@@ -95,6 +95,17 @@ class DailySummaryResponse(BaseModel):
     summaries: list[DailySummary]
 
 
+class WorkoutPreferences(BaseModel):
+    default_range_days: int = 90
+    landing_tab: str = "Overview"
+    visible_workout_cards: list[str] = Field(default_factory=lambda: ["sessions", "volume", "prs", "protein", "calorie_delta", "load_trend"])
+    default_charts: list[str] = Field(default_factory=lambda: ["training_heatmap", "weekly_group_load", "nutrition_scatter", "group_balance"])
+    pinned_exercises: list[str] = Field(default_factory=list)
+    default_group_filter: str = "All"
+    default_exercise_sort: str = "recent_pr"
+    show_import_panel: bool = True
+
+
 SUMMARY_FIELDS = ("calories", "protein", "carbohydrates", "fat", "water", "weight", "steps", "active_energy")
 
 
@@ -106,6 +117,7 @@ class DashboardPreferences(BaseModel):
     untrusted_metric_names: list[str] = Field(default_factory=list)
     default_chart_set: list[str] = Field(default_factory=lambda: ["calories", "protein", "carbohydrates", "fat", "active_energy"])
     source_filters: dict[str, list[str]] = Field(default_factory=dict)
+    workout_preferences: WorkoutPreferences = Field(default_factory=WorkoutPreferences)
 
 
 class DashboardSummaryResponse(BaseModel):
@@ -379,6 +391,41 @@ class StrongNutritionTrainingDay(BaseModel):
     prior_active_energy: float | None = None
 
 
+class StrongDailyLoad(BaseModel):
+    date: dt.date
+    session_count: int
+    total_volume: float
+    working_sets: int
+    duration_seconds: int
+    pr_count: int
+    groups_trained: list[str] = Field(default_factory=list)
+
+
+class StrongWeeklyGroupLoad(BaseModel):
+    week_start: dt.date
+    group: str
+    total_volume: float
+    working_sets: int
+    session_count: int
+
+
+class StrongExercisePr(BaseModel):
+    exercise_name: str
+    date: dt.date
+    weight: float | None = None
+    reps: float | None = None
+    estimated_1rm: float | None = None
+    session_id: int
+
+
+class StrongFilterOptions(BaseModel):
+    groups: list[str] = Field(default_factory=list)
+    movement_patterns: list[str] = Field(default_factory=list)
+    exercises: list[str] = Field(default_factory=list)
+    start_date: dt.date | None = None
+    end_date: dt.date | None = None
+
+
 class StrongNutritionCorrelation(BaseModel):
     nutrient: str
     driver: str
@@ -424,6 +471,10 @@ class StrongAnalyticsResponse(BaseModel):
     weekly_load: list[StrongWeeklyLoad]
     group_balance: list[StrongGroupBalance]
     exercise_taxonomy: dict[str, StrongExerciseTaxonomy]
+    daily_load: list[StrongDailyLoad] = Field(default_factory=list)
+    weekly_group_load: list[StrongWeeklyGroupLoad] = Field(default_factory=list)
+    exercise_prs: list[StrongExercisePr] = Field(default_factory=list)
+    filter_options: StrongFilterOptions = Field(default_factory=StrongFilterOptions)
     nutrition_training_days: list[StrongNutritionTrainingDay]
     nutrition_correlations: list[StrongNutritionCorrelation]
     recovery_load_markers: StrongRecoveryLoadMarkers

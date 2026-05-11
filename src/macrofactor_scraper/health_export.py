@@ -28,10 +28,13 @@ from macrofactor_scraper.models import (
     MetricSummary,
     StrongAnalyticsResponse,
     StrongAnalyticsTotals,
+    StrongDailyLoad,
     StrongExerciseDetailResponse,
+    StrongExercisePr,
     StrongExerciseProgressPoint,
     StrongExerciseSummary,
     StrongExerciseTaxonomy,
+    StrongFilterOptions,
     StrongGroupBalance,
     StrongHighVolumeWeek,
     StrongImportListResponse,
@@ -49,9 +52,11 @@ from macrofactor_scraper.models import (
     StrongSummaryResponse,
     StrongTrainingRestDelta,
     StrongWeeklyLoad,
+    StrongWeeklyGroupLoad,
     StrongWeeklySummary,
     WorkoutListResponse,
     WorkoutRecord,
+    WorkoutPreferences,
 )
 
 
@@ -266,7 +271,7 @@ class HealthAutoExportService:
             data = json.loads(row["preferences_json"])
         except json.JSONDecodeError:
             return DashboardPreferences()
-        return DashboardPreferences.model_validate(data)
+        return _normalize_preferences(DashboardPreferences.model_validate(data))
 
     def update_dashboard_preferences(self, preferences: DashboardPreferences) -> DashboardPreferences:
         self._ensure_schema()
@@ -472,6 +477,11 @@ class HealthAutoExportService:
         sessions = self._strong_session_records(start, end, include_sets=include_sets)
         return StrongSessionListResponse(count=len(sessions), sessions=sessions)
 
+    def strong_session_detail(self, session_id: int) -> StrongSessionRecord | None:
+        self._ensure_schema()
+        sessions = self._strong_sessions_by_ids([session_id])
+        return sessions[0] if sessions else None
+
     def strong_summary(self, start: date | None = None, end: date | None = None) -> StrongSummaryResponse:
         self._ensure_schema()
         _validate_range(start, end)
@@ -534,6 +544,10 @@ class HealthAutoExportService:
             weekly_load=weekly_load,
             group_balance=self._strong_group_balance(working_rows, pr_rows),
             exercise_taxonomy=exercise_taxonomy,
+            daily_load=self._strong_daily_load(sessions, working_rows, pr_rows),
+            weekly_group_load=self._strong_weekly_group_load(working_rows),
+            exercise_prs=self._strong_exercise_prs(pr_rows),
+            filter_options=self._strong_filter_options(sessions, working_rows),
             nutrition_training_days=nutrition_training_days,
             nutrition_correlations=self._strong_nutrition_correlations(nutrition_training_days),
             recovery_load_markers=self._strong_recovery_load_markers(weekly_load, nutrition_training_days, nutrition_comparison),
@@ -1017,6 +1031,97 @@ class HealthAutoExportService:
                 )
             )
         return output
+
+    def _strong_daily_load(
+        self,
+        sessions: list[StrongSessionRecord],
+        working_rows: list[sqlite3.Row],
+        pr_rows: list[sqlite3.Row],
+    ) -> list[StrongDailyLoad]:
+        sessions_by_date: dict[date, list[StrongSessionRecord]] = {}
+        for session in sessions:
+            sessions_by_date.setdefault(session.workout_date, []).append(session)
+        rows_by_date: dict[date, list[sqlite3.Row]] = {}
+        for row in working_rows:
+            day = _parse_date(row["workout_date"])
+            if day is not None:
+                rows_by_date.setdefault(day, []).append(row)
+        prs_by_date: dict[date, int] = {}
+        for row in pr_rows:
+            day = _parse_date(row["workout_date"])
+            if day is not None:
+                prs_by_date[day] = prs_by_date.get(day, 0) + 1
+
+        output: list[StrongDailyLoad] = []
+        for day in sorted(set(sessions_by_date) | set(rows_by_date) | set(prs_by_date)):
+            day_sessions = sessions_by_date.get(day, [])
+            day_rows = rows_by_date.get(day, [])
+            groups = sorted({classify_strong_exercise(row["exercise_name"]).primary_group for row in day_rows})
+            output.append(
+                StrongDailyLoad(
+                    date=day,
+                    session_count=len(day_sessions),
+                    total_volume=sum(_strong_volume_from_row(row) for row in day_rows),
+                    working_sets=len(day_rows),
+                    duration_seconds=sum(session.duration_seconds or 0 for session in day_sessions),
+                    pr_count=prs_by_date.get(day, 0),
+                    groups_trained=groups,
+                )
+            )
+        return output
+
+    def _strong_weekly_group_load(self, working_rows: list[sqlite3.Row]) -> list[StrongWeeklyGroupLoad]:
+        grouped: dict[tuple[date, str], dict[str, Any]] = {}
+        for row in working_rows:
+            day = _parse_date(row["workout_date"])
+            if day is None:
+                continue
+            group = classify_strong_exercise(row["exercise_name"]).primary_group
+            bucket = grouped.setdefault((_week_start(day), group), {"volume": 0.0, "sets": 0, "sessions": set()})
+            bucket["volume"] += _strong_volume_from_row(row)
+            bucket["sets"] += 1
+            bucket["sessions"].add(int(row["session_id"]))
+        return [
+            StrongWeeklyGroupLoad(
+                week_start=week,
+                group=group,
+                total_volume=float(values["volume"]),
+                working_sets=int(values["sets"]),
+                session_count=len(values["sessions"]),
+            )
+            for (week, group), values in sorted(grouped.items(), key=lambda item: (item[0][0], item[0][1]))
+        ]
+
+    def _strong_exercise_prs(self, pr_rows: list[sqlite3.Row]) -> list[StrongExercisePr]:
+        output: list[StrongExercisePr] = []
+        for row in pr_rows:
+            day = _parse_date(row["workout_date"])
+            if day is None:
+                continue
+            output.append(
+                StrongExercisePr(
+                    exercise_name=row["exercise_name"],
+                    date=day,
+                    weight=row["weight"],
+                    reps=row["reps"],
+                    estimated_1rm=_strong_estimated_1rm_from_row(row),
+                    session_id=int(row["session_id"]),
+                )
+            )
+        return output
+
+    def _strong_filter_options(self, sessions: list[StrongSessionRecord], working_rows: list[sqlite3.Row]) -> StrongFilterOptions:
+        taxonomy = [classify_strong_exercise(row["exercise_name"]) for row in working_rows]
+        session_dates = [session.workout_date for session in sessions]
+        row_dates = [day for row in working_rows for day in [_parse_date(row["workout_date"])] if day is not None]
+        dates = session_dates + row_dates
+        return StrongFilterOptions(
+            groups=sorted({item.primary_group for item in taxonomy}),
+            movement_patterns=sorted({item.movement_pattern for item in taxonomy}),
+            exercises=sorted({row["exercise_name"] for row in working_rows}),
+            start_date=min(dates) if dates else None,
+            end_date=max(dates) if dates else None,
+        )
 
     def _strong_group_balance(self, working_rows: list[sqlite3.Row], pr_rows: list[sqlite3.Row]) -> list[StrongGroupBalance]:
         pr_ids = {int(row["id"]) for row in pr_rows}
@@ -1819,6 +1924,26 @@ def _normalize_preferences(preferences: DashboardPreferences) -> DashboardPrefer
         untrusted_metric_names=sorted({name for name in preferences.untrusted_metric_names if name}),
         default_chart_set=chart_set or ["calories", "protein", "carbohydrates", "fat", "active_energy"],
         source_filters=source_filters,
+        workout_preferences=_normalize_workout_preferences(preferences.workout_preferences),
+    )
+
+
+def _normalize_workout_preferences(preferences: WorkoutPreferences) -> WorkoutPreferences:
+    tabs = {"Overview", "Sessions", "Exercises", "Nutrition", "Customize"}
+    cards = {"sessions", "volume", "prs", "protein", "calorie_delta", "load_trend"}
+    charts = {"training_heatmap", "weekly_group_load", "nutrition_scatter", "group_balance", "exercise_progress", "session_timeline"}
+    sorts = {"recent_pr", "volume", "last_performed", "estimated_1rm_delta"}
+    visible_cards = [card for card in preferences.visible_workout_cards if card in cards]
+    default_charts = [chart for chart in preferences.default_charts if chart in charts]
+    return WorkoutPreferences(
+        default_range_days=max(7, min(3650, int(preferences.default_range_days))),
+        landing_tab=preferences.landing_tab if preferences.landing_tab in tabs else "Overview",
+        visible_workout_cards=visible_cards or ["sessions", "volume", "prs", "protein", "calorie_delta", "load_trend"],
+        default_charts=default_charts or ["training_heatmap", "weekly_group_load", "nutrition_scatter", "group_balance"],
+        pinned_exercises=sorted({name.strip() for name in preferences.pinned_exercises if name.strip()}),
+        default_group_filter=preferences.default_group_filter.strip() or "All",
+        default_exercise_sort=preferences.default_exercise_sort if preferences.default_exercise_sort in sorts else "recent_pr",
+        show_import_panel=bool(preferences.show_import_panel),
     )
 
 
