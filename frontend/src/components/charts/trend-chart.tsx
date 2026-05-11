@@ -6,9 +6,15 @@ import type { DailySummary, SummaryField } from "../../lib/types";
 import { FIELD_META } from "../../lib/types";
 import { formatShortDate, fmt } from "../../lib/format";
 
+type ChartRow = Record<string, string | number | null>;
+
 interface TrendChartProps {
-  data: DailySummary[];
+  /** Pre-computed rows with date + field keys (and optional <field>_ma keys) */
+  rawData?: ChartRow[];
+  /** Legacy: DailySummary[] — used by callers that don't pre-process */
+  data?: DailySummary[];
   fields: SummaryField[];
+  maFields?: SummaryField[];
   height?: number;
   showLegend?: boolean;
 }
@@ -19,18 +25,37 @@ interface TickProps {
   payload?: { value: string };
 }
 
-function CustomTooltip({ active, payload, label }: { active?: boolean; payload?: { dataKey: string; value: number; color: string }[]; label?: string }) {
+function CustomTooltip({ active, payload, label }: {
+  active?: boolean;
+  payload?: { dataKey: string; value: number; color: string }[];
+  label?: string;
+}) {
   if (!active || !payload?.length) return null;
+  const mainEntries = payload.filter(p => !String(p.dataKey).endsWith("_ma"));
+  const maEntries = payload.filter(p => String(p.dataKey).endsWith("_ma"));
   return (
     <div className="bg-zinc-900 border border-zinc-700 rounded-lg px-3 py-2 text-xs shadow-xl">
       <p className="text-zinc-400 mb-1.5">{label ? formatShortDate(label) : ""}</p>
-      {payload.map(({ dataKey, value, color }) => {
+      {mainEntries.map(({ dataKey, value, color }) => {
         const meta = FIELD_META[dataKey as SummaryField];
         return (
           <div key={dataKey} className="flex items-center gap-2">
             <span className="w-2 h-2 rounded-full shrink-0" style={{ background: color }} />
             <span className="text-zinc-300">{meta?.label ?? dataKey}:</span>
             <span className="font-semibold text-zinc-100 tabular-nums">
+              {fmt(value, meta?.decimals ?? 1)} {meta?.unit ?? ""}
+            </span>
+          </div>
+        );
+      })}
+      {maEntries.map(({ dataKey, value }) => {
+        const field = String(dataKey).replace("_ma", "") as SummaryField;
+        const meta = FIELD_META[field];
+        return (
+          <div key={dataKey} className="flex items-center gap-2 opacity-60">
+            <span className="w-2 h-2 border border-current rounded-full shrink-0" />
+            <span className="text-zinc-400">{meta?.label} 7d avg:</span>
+            <span className="text-zinc-300 tabular-nums">
               {fmt(value, meta?.decimals ?? 1)} {meta?.unit ?? ""}
             </span>
           </div>
@@ -49,9 +74,22 @@ function XTick({ x = 0, y = 0, payload }: TickProps) {
   );
 }
 
-export function TrendChart({ data, fields, height = 280, showLegend = false }: TrendChartProps) {
-  const chartData = data.map((d) => ({ date: d.date, ...Object.fromEntries(fields.map((f) => [f, d[f]])) }));
+export function TrendChart({
+  rawData,
+  data,
+  fields,
+  maFields = [],
+  height = 280,
+  showLegend = false,
+}: TrendChartProps) {
+  const chartData: ChartRow[] = rawData
+    ?? (data ?? []).map(d => ({
+        date: d.date,
+        ...Object.fromEntries(fields.map(f => [f, d[f]])),
+      }));
+
   const [primary, ...rest] = fields;
+  const hasWeight = fields.includes("weight") && fields.length > 1;
 
   return (
     <ResponsiveContainer width="100%" height={height}>
@@ -59,7 +97,7 @@ export function TrendChart({ data, fields, height = 280, showLegend = false }: T
         <CartesianGrid stroke="#27272a" strokeDasharray="3 3" vertical={false} />
         <XAxis dataKey="date" tick={<XTick />} axisLine={false} tickLine={false} minTickGap={40} />
         <YAxis yAxisId="left" axisLine={false} tickLine={false} tick={{ fill: "#52525b", fontSize: 10 }} width={36} />
-        {fields.includes("weight") && fields.length > 1 && (
+        {hasWeight && (
           <YAxis yAxisId="right" orientation="right" axisLine={false} tickLine={false}
             tick={{ fill: "#52525b", fontSize: 10 }} width={36} />
         )}
@@ -67,7 +105,10 @@ export function TrendChart({ data, fields, height = 280, showLegend = false }: T
         {showLegend && (
           <Legend
             wrapperStyle={{ fontSize: 11, color: "#71717a" }}
-            formatter={(v) => FIELD_META[v as SummaryField]?.label ?? v}
+            formatter={(v: string) => {
+              if (v.endsWith("_ma")) return `${FIELD_META[v.replace("_ma", "") as SummaryField]?.label} 7d avg`;
+              return FIELD_META[v as SummaryField]?.label ?? v;
+            }}
           />
         )}
         {primary && (
@@ -87,13 +128,27 @@ export function TrendChart({ data, fields, height = 280, showLegend = false }: T
         {rest.map((f) => (
           <Line
             key={f}
-            yAxisId={f === "weight" ? "right" : "left"}
+            yAxisId={f === "weight" ? (hasWeight ? "right" : "left") : "left"}
             type="monotone"
             dataKey={f}
             stroke={FIELD_META[f].color}
             strokeWidth={1.5}
             dot={false}
             connectNulls
+          />
+        ))}
+        {maFields.map((f) => (
+          <Line
+            key={`${f}_ma`}
+            yAxisId={f === "weight" ? (hasWeight ? "right" : "left") : "left"}
+            type="monotone"
+            dataKey={`${f}_ma`}
+            stroke={FIELD_META[f].color}
+            strokeWidth={1}
+            strokeDasharray="4 3"
+            dot={false}
+            connectNulls
+            strokeOpacity={0.6}
           />
         ))}
       </ComposedChart>
