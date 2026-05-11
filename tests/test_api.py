@@ -3,6 +3,7 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
+from macrofactor_scraper import api as api_module
 from macrofactor_scraper.api import app, get_health_export_service
 from macrofactor_scraper.config import Settings, get_settings
 from macrofactor_scraper.health_export import HealthAutoExportService
@@ -18,6 +19,8 @@ def _client(tmp_path: Path, *, read_api_key: str | None = None) -> TestClient:
 
 def _clear_overrides() -> None:
     app.dependency_overrides.clear()
+    api_module._LOGIN_FAILURES.clear()
+    api_module._LOGIN_LOCKOUTS.clear()
     if hasattr(app.state, "health_export_service"):
         delattr(app.state, "health_export_service")
 
@@ -460,6 +463,74 @@ def test_dashboard_login_cookie_allows_private_reads(tmp_path: Path) -> None:
         assert client.get("/").status_code == 200
     finally:
         _clear_overrides()
+
+
+def test_dashboard_login_throttles_repeated_failures(tmp_path: Path) -> None:
+    client = _client(tmp_path)
+    try:
+        for _ in range(api_module.LOGIN_FAILURE_LIMIT):
+            response = client.post("/login", data={"password": "bad"}, follow_redirects=False)
+            assert response.status_code == 401
+
+        locked = client.post("/login", data={"password": "secret"}, follow_redirects=False)
+        assert locked.status_code == 429
+    finally:
+        _clear_overrides()
+
+
+def test_ingest_rejects_oversized_json_body(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    client = _client(tmp_path)
+    monkeypatch.setattr(api_module, "HEALTH_EXPORT_JSON_MAX_BYTES", 8)
+    try:
+        response = client.post(
+            "/v1/ingest/health-auto-export",
+            content='{"data": {}}',
+            headers={"X-API-Key": "secret", "Content-Type": "application/json"},
+        )
+        assert response.status_code == 413
+    finally:
+        _clear_overrides()
+
+
+def test_strong_import_rejects_oversized_csv(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    client = _client(tmp_path)
+    monkeypatch.setattr(api_module, "STRONG_CSV_MAX_BYTES", 8)
+    try:
+        client.post("/v1/ingest/health-auto-export", json=_payload(), headers=_auth())
+        response = client.post(
+            "/v1/strong/import",
+            files={"file": ("strong.csv", "Date,Workout Name\n" + ("x" * 20), "text/csv")},
+            headers=_auth(),
+        )
+        assert response.status_code == 413
+    finally:
+        _clear_overrides()
+
+
+def test_production_requires_distinct_runtime_secrets() -> None:
+    invalid = Settings(
+        environment="production",
+        ingest_api_key="same",
+        read_api_key="same",
+        session_secret="session",
+        dashboard_password="password",
+    )
+    with pytest.raises(ValueError, match="distinct"):
+        invalid.validate_runtime_security()
+
+    valid = Settings(
+        environment="production",
+        ingest_api_key="ingest",
+        read_api_key="read",
+        session_secret="session",
+        dashboard_password="password",
+    )
+    valid.validate_runtime_security()
+
+
+def test_production_read_key_never_falls_back_to_ingest_key() -> None:
+    settings = Settings(environment="production", ingest_api_key="secret", read_api_key=None)
+    assert api_module._valid_read_api_key("secret", settings) is False
 
 
 def test_ingest_status_dashboard_summary_and_exports_require_auth(tmp_path: Path) -> None:

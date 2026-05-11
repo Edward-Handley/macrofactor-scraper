@@ -4,7 +4,9 @@ import base64
 import csv
 import hmac
 import io
+import json
 import time
+from collections import defaultdict, deque
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import date
@@ -41,9 +43,18 @@ from macrofactor_scraper.models import (
 
 SESSION_COOKIE_NAME = "health_export_session"
 SESSION_MAX_AGE_SECONDS = 7 * 24 * 60 * 60
+LOGIN_BODY_MAX_BYTES = 4 * 1024
+LOGIN_FAILURE_LIMIT = 5
+LOGIN_FAILURE_WINDOW_SECONDS = 15 * 60
+LOGIN_LOCKOUT_SECONDS = 10 * 60
+HEALTH_EXPORT_JSON_MAX_BYTES = 25 * 1024 * 1024
+STRONG_CSV_MAX_BYTES = 10 * 1024 * 1024
 STATIC_DIR = Path(__file__).with_name("static")
 FRONTEND_DIR = STATIC_DIR / "dashboard"
 APP_SETTINGS = Settings()
+APP_SETTINGS.validate_runtime_security()
+_LOGIN_FAILURES: defaultdict[str, deque[float]] = defaultdict(deque)
+_LOGIN_LOCKOUTS: dict[str, float] = {}
 
 
 @asynccontextmanager
@@ -80,7 +91,9 @@ def _valid_api_key(candidate: str | None, settings: Settings) -> bool:
 
 
 def _valid_read_api_key(candidate: str | None, settings: Settings) -> bool:
-    expected = settings.read_api_key or settings.ingest_api_key
+    expected = settings.read_api_key
+    if expected is None and settings.environment != "production":
+        expected = settings.ingest_api_key
     return bool(expected and candidate and hmac.compare_digest(candidate, expected))
 
 
@@ -112,7 +125,7 @@ def require_private_access(
     x_api_key: str | None = Header(default=None),
     settings: Settings = Depends(get_settings),
 ) -> None:
-    if not (settings.read_api_key or settings.ingest_api_key):
+    if not settings.read_api_key and not (settings.environment != "production" and settings.ingest_api_key):
         raise HTTPException(status_code=500, detail="Read API key is not configured")
     if _valid_read_api_key(x_api_key, settings):
         return
@@ -140,10 +153,21 @@ async def login_page() -> HTMLResponse:
 
 @app.post("/login")
 async def login(request: Request, settings: Settings = Depends(get_settings)) -> Response:
-    body = (await request.body()).decode("utf-8")
+    _enforce_content_length(request, LOGIN_BODY_MAX_BYTES)
+    client_key = _client_key(request)
+    now = time.time()
+    if _is_login_locked(client_key, now):
+        return HTMLResponse(_read_static("login.html", error="Too many failed attempts. Try again later."), status_code=429)
+
+    raw_body = await request.body()
+    if len(raw_body) > LOGIN_BODY_MAX_BYTES:
+        raise HTTPException(status_code=413, detail="Login request body is too large")
+    body = raw_body.decode("utf-8")
     password = parse_qs(body).get("password", [""])[0]
     if not settings.dashboard_secret or not hmac.compare_digest(password, settings.dashboard_secret):
+        _record_login_failure(client_key, now)
         return HTMLResponse(_read_static("login.html", error="Invalid password"), status_code=401)
+    _clear_login_failures(client_key)
     expires_at = int(time.time()) + SESSION_MAX_AGE_SECONDS
     response = RedirectResponse("/", status_code=303)
     response.set_cookie(
@@ -189,9 +213,13 @@ async def ingest_health_auto_export(
         raise HTTPException(status_code=500, detail="Ingestion API key is not configured")
     if x_api_key != settings.ingest_api_key:
         raise HTTPException(status_code=401, detail="Invalid ingestion API key")
+    _enforce_content_length(request, HEALTH_EXPORT_JSON_MAX_BYTES)
+    body = await request.body()
+    if len(body) > HEALTH_EXPORT_JSON_MAX_BYTES:
+        raise HTTPException(status_code=413, detail="Health export payload is too large")
     try:
-        payload = await request.json()
-    except ValueError as exc:
+        payload = json.loads(body)
+    except (TypeError, ValueError) as exc:
         raise HTTPException(status_code=400, detail="Malformed JSON payload") from exc
     try:
         return service.ingest(payload, dict(request.headers))
@@ -282,14 +310,19 @@ async def workouts(
 
 @app.post("/v1/strong/import", response_model=StrongImportResponse, dependencies=[Depends(require_private_access)])
 async def import_strong_csv(
+    request: Request,
     file: UploadFile = File(...),
     service: HealthAutoExportService = Depends(get_health_export_service),
 ) -> StrongImportResponse:
+    _enforce_content_length(request, STRONG_CSV_MAX_BYTES + 1024 * 1024)
     filename = file.filename or "strong.csv"
     if not filename.lower().endswith(".csv"):
         raise HTTPException(status_code=422, detail="Strong export must be a CSV file")
+    content = await file.read()
+    if len(content) > STRONG_CSV_MAX_BYTES:
+        raise HTTPException(status_code=413, detail="Strong export CSV is too large")
     try:
-        return service.import_strong_csv(filename, await file.read())
+        return service.import_strong_csv(filename, content)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
@@ -471,6 +504,51 @@ def _csv_rows_response(rows: list[dict[str, object]], fieldnames: list[str], fil
     for row in rows:
         writer.writerow({field: "" if row.get(field) is None else row.get(field) for field in fieldnames})
     return _csv_response(output.getvalue(), filename)
+
+
+def _enforce_content_length(request: Request, max_bytes: int) -> None:
+    content_length = request.headers.get("content-length")
+    if content_length is None:
+        return
+    try:
+        length = int(content_length)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Invalid Content-Length header") from exc
+    if length > max_bytes:
+        raise HTTPException(status_code=413, detail="Request body is too large")
+
+
+def _client_key(request: Request) -> str:
+    forwarded_for = request.headers.get("x-forwarded-for")
+    if forwarded_for:
+        return forwarded_for.rsplit(",", 1)[-1].strip()
+    return request.client.host if request.client else "unknown"
+
+
+def _is_login_locked(client_key: str, now: float) -> bool:
+    locked_until = _LOGIN_LOCKOUTS.get(client_key)
+    if locked_until is None:
+        return False
+    if locked_until <= now:
+        _LOGIN_LOCKOUTS.pop(client_key, None)
+        _LOGIN_FAILURES.pop(client_key, None)
+        return False
+    return True
+
+
+def _record_login_failure(client_key: str, now: float) -> None:
+    failures = _LOGIN_FAILURES[client_key]
+    cutoff = now - LOGIN_FAILURE_WINDOW_SECONDS
+    while failures and failures[0] < cutoff:
+        failures.popleft()
+    failures.append(now)
+    if len(failures) >= LOGIN_FAILURE_LIMIT:
+        _LOGIN_LOCKOUTS[client_key] = now + LOGIN_LOCKOUT_SECONDS
+
+
+def _clear_login_failures(client_key: str) -> None:
+    _LOGIN_FAILURES.pop(client_key, None)
+    _LOGIN_LOCKOUTS.pop(client_key, None)
 
 
 @app.get("/{full_path:path}")

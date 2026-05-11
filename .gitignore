@@ -9,4 +9,15 @@ dist/
 build/
 *.egg-info/
 .external/
+.claude/
 frontend/node_modules/
+data/
+imports/
+exports/
+repair_backups/
+*.sqlite
+*.sqlite3
+*.db
+*.db-*
+*.csv
+tmp_pytest*/

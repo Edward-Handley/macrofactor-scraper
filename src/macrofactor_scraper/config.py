@@ -93,6 +93,33 @@ class Settings(BaseSettings):
     def effective_session_secret(self) -> str | None:
         return self.session_secret or self.ingest_api_key
 
+    def validate_runtime_security(self) -> None:
+        if self.environment != "production":
+            return
+
+        missing = [
+            name
+            for name, value in {
+                "HEALTH_EXPORT_API_KEY": self.ingest_api_key,
+                "HEALTH_EXPORT_READ_API_KEY": self.read_api_key,
+                "SESSION_SECRET": self.session_secret,
+                "DASHBOARD_PASSWORD": self.dashboard_password,
+            }.items()
+            if not value
+        ]
+        if missing:
+            raise ValueError(f"Production requires these settings: {', '.join(missing)}")
+
+        reused = []
+        if self.read_api_key == self.ingest_api_key:
+            reused.append("HEALTH_EXPORT_READ_API_KEY must be different from HEALTH_EXPORT_API_KEY")
+        if self.session_secret in {self.ingest_api_key, self.read_api_key, self.dashboard_password}:
+            reused.append("SESSION_SECRET must be different from API keys and DASHBOARD_PASSWORD")
+        if self.dashboard_password in {self.ingest_api_key, self.read_api_key}:
+            reused.append("DASHBOARD_PASSWORD must be different from API keys")
+        if reused:
+            raise ValueError("Production secrets must be distinct: " + "; ".join(reused))
+
 
 @lru_cache
 def get_settings() -> Settings:

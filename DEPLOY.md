@@ -82,7 +82,7 @@ python3 -c "import secrets; print(secrets.token_urlsafe(48))"
 nano .env
 ```
 
-Set:
+Set all four secret values to different values. In production the app now refuses to start if `HEALTH_EXPORT_READ_API_KEY`, `SESSION_SECRET`, or `DASHBOARD_PASSWORD` are missing or reused as the ingest key.
 
 ```dotenv
 DOMAIN=health.example.com
@@ -94,6 +94,8 @@ SESSION_SECRET=paste-a-second-generated-secret
 DASHBOARD_PASSWORD=paste-a-dashboard-password
 ```
 
+The reverse proxy and API both reject oversized request bodies. Health Auto Export JSON uploads are capped at 25 MB and Strong CSV uploads are capped at 10 MB. If you need to do a one-off backfill larger than 25 MB, temporarily raise `request_body max_size` in `Caddyfile`, deploy, post the file, then lower it again.
+
 ## 8. Start The App
 
 ```bash
@@ -103,6 +105,14 @@ docker compose logs -f caddy
 ```
 
 The Docker image builds the Vite React dashboard in a Node stage, then copies the compiled assets into the Python runtime image. No browser CDN dependency is required.
+
+The API container runs as UID/GID `1000:1000` with a read-only filesystem. Make sure the host data directory is writable by that user:
+
+```bash
+cd /opt/health-export
+mkdir -p data
+sudo chown -R 1000:1000 data
+```
 
 Test:
 
@@ -204,8 +214,13 @@ For production, add a daily cron job that copies `data/health_export.sqlite3` to
 ```bash
 cd /opt/health-export
 git pull
+mkdir -p data
+sudo chown -R 1000:1000 data
 docker compose up -d --build
+docker compose logs --tail=100 api
 ```
+
+After this hardening update, check `.env` before restarting. Production needs distinct values for `HEALTH_EXPORT_API_KEY`, `HEALTH_EXPORT_READ_API_KEY`, `SESSION_SECRET`, and `DASHBOARD_PASSWORD`; otherwise the API exits during startup with a configuration error.
 
 For a local asset check before deployment:
 
