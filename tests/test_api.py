@@ -358,6 +358,92 @@ def test_workouts_and_invalid_range(tmp_path: Path) -> None:
         _clear_overrides()
 
 
+def test_strong_csv_import_filters_dedupes_and_summarizes(tmp_path: Path) -> None:
+    client = _client(tmp_path)
+    csv_body = """Date,Workout Name,Duration,Exercise Name,Set Order,Weight,Reps,Distance,Seconds,Notes,Workout Notes,RPE
+2026-04-30 10:00:00,Old Day,45m,Bench Press (Barbell),1,60,5,0,0,,,8
+2026-05-01 10:00:00,Push Day,1h 5m,Bench Press (Barbell),W,40,8,0,0,warmup,,6
+2026-05-01 10:00:00,Push Day,1h 5m,Bench Press (Barbell),1,80,5,0,0,,,8
+2026-05-01 10:00:00,Push Day,1h 5m,Bench Press (Barbell),2,82.5,4,0,0,,,9
+2026-05-02 11:00:00,Pull Day,50m,Lat Pulldown (Cable),1,70,10,0,0,,felt good,8
+"""
+    try:
+        client.post("/v1/ingest/health-auto-export", json=_payload(), headers=_auth())
+
+        unauth = client.post(
+            "/v1/strong/import",
+            files={"file": ("strong.csv", csv_body, "text/csv")},
+        )
+        assert unauth.status_code == 401
+
+        response = client.post(
+            "/v1/strong/import",
+            files={"file": ("strong.csv", csv_body, "text/csv")},
+            headers=_auth(),
+        )
+        assert response.status_code == 200
+        imported = response.json()
+        assert imported["nutrition_start_date"] == "2026-05-01"
+        assert imported["rows_seen"] == 5
+        assert imported["rows_ignored_before_nutrition"] == 1
+        assert imported["sessions_inserted"] == 2
+        assert imported["sets_inserted"] == 4
+        assert imported["duplicate_sets"] == 0
+
+        duplicate = client.post(
+            "/v1/strong/import",
+            files={"file": ("strong.csv", csv_body, "text/csv")},
+            headers=_auth(),
+        )
+        assert duplicate.status_code == 200
+        assert duplicate.json()["sessions_inserted"] == 0
+        assert duplicate.json()["sets_inserted"] == 0
+        assert duplicate.json()["duplicate_sets"] == 4
+
+        summary = client.get("/v1/strong/summary?start=2026-05-01&end=2026-05-02", headers=_auth())
+        assert summary.status_code == 200
+        body = summary.json()
+        assert body["session_count"] == 2
+        assert body["working_set_count"] == 3
+        assert body["total_volume"] == 80 * 5 + 82.5 * 4 + 70 * 10
+        assert body["nutrition"]["training_day_count"] == 2
+        bench = next(item for item in body["exercises"] if item["exercise_name"] == "Bench Press (Barbell)")
+        assert bench["best_estimated_1rm"] == 82.5 * (1 + 4 / 30)
+
+        sessions = client.get("/v1/strong/sessions?start=2026-05-01&end=2026-05-02", headers=_auth())
+        assert sessions.status_code == 200
+        assert sessions.json()["sessions"][1]["sets"][0]["is_warmup"] is True
+
+        detail = client.get("/v1/strong/exercises/Bench%20Press%20%28Barbell%29?start=2026-05-01&end=2026-05-02", headers=_auth())
+        assert detail.status_code == 200
+        assert detail.json()["points"][0]["working_sets"] == 2
+    finally:
+        _clear_overrides()
+
+
+def test_strong_csv_import_requires_nutrition_and_columns(tmp_path: Path) -> None:
+    client = _client(tmp_path)
+    try:
+        no_nutrition = client.post(
+            "/v1/strong/import",
+            files={"file": ("strong.csv", "Date,Workout Name\n", "text/csv")},
+            headers=_auth(),
+        )
+        assert no_nutrition.status_code == 422
+        assert "Nutrition data" in no_nutrition.json()["detail"]
+
+        client.post("/v1/ingest/health-auto-export", json=_payload(), headers=_auth())
+        invalid = client.post(
+            "/v1/strong/import",
+            files={"file": ("strong.csv", "Date,Workout Name\n", "text/csv")},
+            headers=_auth(),
+        )
+        assert invalid.status_code == 422
+        assert "missing required columns" in invalid.json()["detail"]
+    finally:
+        _clear_overrides()
+
+
 def test_dashboard_login_cookie_allows_private_reads(tmp_path: Path) -> None:
     client = _client(tmp_path)
     try:

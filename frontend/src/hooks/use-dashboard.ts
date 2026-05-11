@@ -45,6 +45,60 @@ export function useIngestStatus() {
   });
 }
 
+export function useWorkouts(start: string, end: string) {
+  return useQuery({
+    queryKey: ["workouts", start, end],
+    queryFn: () => api.workouts(start, end),
+    staleTime: 60_000,
+  });
+}
+
+export function useStrongImports() {
+  return useQuery({
+    queryKey: ["strong-imports"],
+    queryFn: api.strong.imports,
+    staleTime: 60_000,
+  });
+}
+
+export function useStrongSummary(start: string, end: string) {
+  return useQuery({
+    queryKey: ["strong-summary", start, end],
+    queryFn: () => api.strong.summary(start, end),
+    staleTime: 60_000,
+  });
+}
+
+export function useStrongSessions(start: string, end: string) {
+  return useQuery({
+    queryKey: ["strong-sessions", start, end],
+    queryFn: () => api.strong.sessions(start, end),
+    staleTime: 60_000,
+  });
+}
+
+export function useStrongExercise(exerciseName: string | null, start: string, end: string) {
+  return useQuery({
+    queryKey: ["strong-exercise", exerciseName, start, end],
+    queryFn: () => api.strong.exercise(exerciseName!, start, end),
+    enabled: !!exerciseName,
+    staleTime: 60_000,
+  });
+}
+
+export function useImportStrongCsv() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: api.strong.importCsv,
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["strong-imports"] });
+      qc.invalidateQueries({ queryKey: ["strong-summary"] });
+      qc.invalidateQueries({ queryKey: ["strong-sessions"] });
+      qc.invalidateQueries({ queryKey: ["strong-exercise"] });
+    },
+  });
+}
+
 export function useDiagnostics(date: string | null) {
   return useQuery({
     queryKey: ["diagnostics", date],

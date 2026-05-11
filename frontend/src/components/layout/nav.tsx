@@ -1,10 +1,11 @@
 import { NavLink } from "react-router-dom";
-import { Activity, BarChart2, Database, Search, Settings } from "lucide-react";
+import { Activity, BarChart2, Database, Dumbbell, Search, Settings } from "lucide-react";
 import { cn } from "../../lib/utils";
 
 const NAV_ITEMS = [
   { to: "/",            label: "Today",    Icon: Activity  },
   { to: "/trends",      label: "Trends",   Icon: BarChart2 },
+  { to: "/workouts",    label: "Workouts", Icon: Dumbbell  },
   { to: "/data-health", label: "Data",     Icon: Database  },
   { to: "/explorer",    label: "Explore",  Icon: Search    },
   { to: "/settings",    label: "Settings", Icon: Settings  },

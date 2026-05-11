@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import hashlib
+import csv
+import io
 import json
 import sqlite3
 from collections.abc import Iterable
 from dataclasses import dataclass
-from datetime import date, datetime, time
+from datetime import date, datetime, time, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -24,6 +26,19 @@ from macrofactor_scraper.models import (
     MetricRecord,
     MetricRecordsResponse,
     MetricSummary,
+    StrongExerciseDetailResponse,
+    StrongExerciseProgressPoint,
+    StrongExerciseSummary,
+    StrongImportListResponse,
+    StrongImportRecord,
+    StrongImportResponse,
+    StrongNutritionComparison,
+    StrongRecentPr,
+    StrongSessionListResponse,
+    StrongSessionRecord,
+    StrongSetRecord,
+    StrongSummaryResponse,
+    StrongWeeklySummary,
     WorkoutListResponse,
     WorkoutRecord,
 )
@@ -32,6 +47,20 @@ from macrofactor_scraper.models import (
 SUMMARY_FIELDS = ("calories", "protein", "carbohydrates", "fat", "water", "weight", "steps", "active_energy")
 REPLACEMENT_SUMMARY_KEYS = {"weight"}
 RUNNING_TOTAL_SUMMARY_KEYS = {"calories", "protein", "carbohydrates", "fat", "water", "active_energy"}
+STRONG_REQUIRED_COLUMNS = {
+    "Date",
+    "Workout Name",
+    "Duration",
+    "Exercise Name",
+    "Set Order",
+    "Weight",
+    "Reps",
+    "Distance",
+    "Seconds",
+    "Notes",
+    "Workout Notes",
+    "RPE",
+}
 
 
 @dataclass(frozen=True)
@@ -53,6 +82,25 @@ class NormalizedWorkout:
     end_date: datetime | None
     duration_seconds: float | None
     energy: float | None
+    raw: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class StrongParsedSet:
+    started_at: datetime
+    workout_date: date
+    workout_name: str
+    duration_seconds: int | None
+    exercise_name: str
+    set_order: str
+    is_warmup: bool
+    weight: float | None
+    reps: float | None
+    distance: float | None
+    seconds: float | None
+    notes: str | None
+    workout_notes: str | None
+    rpe: float | None
     raw: dict[str, Any]
 
 
@@ -304,6 +352,155 @@ class HealthAutoExportService:
             )
         return MetricDateDiagnosticResponse(date=target_date, count=len(diagnostics), diagnostics=diagnostics)
 
+    def import_strong_csv(self, filename: str, content: bytes) -> StrongImportResponse:
+        self._ensure_schema()
+        nutrition_start = self._nutrition_start_date()
+        if nutrition_start is None:
+            raise ValueError("Nutrition data must be imported before Strong workouts")
+
+        payload_hash = hashlib.sha256(content).hexdigest()
+        parsed_sets, rows_seen, ignored, errors = parse_strong_csv(content, nutrition_start)
+        with self._connect() as conn:
+            existing = conn.execute("SELECT id FROM strong_imports WHERE payload_hash = ?", (payload_hash,)).fetchone()
+            if existing is None:
+                cursor = conn.execute(
+                    """
+                    INSERT INTO strong_imports
+                        (filename, payload_hash, nutrition_start_date, rows_seen, rows_imported,
+                         rows_ignored_before_nutrition, sessions_inserted, sets_inserted, duplicate_sets, errors_json)
+                    VALUES (?, ?, ?, ?, ?, ?, 0, 0, 0, ?)
+                    """,
+                    (
+                        filename,
+                        payload_hash,
+                        nutrition_start.isoformat(),
+                        rows_seen,
+                        len(parsed_sets),
+                        ignored,
+                        _canonical_json(errors),
+                    ),
+                )
+                import_id = int(cursor.lastrowid)
+            else:
+                import_id = int(existing["id"])
+
+            sessions_inserted = 0
+            sets_inserted = 0
+            session_ids: dict[str, int] = {}
+            for parsed in parsed_sets:
+                session_fingerprint = _strong_session_fingerprint(parsed)
+                session_id, inserted = self._upsert_strong_session(conn, import_id, parsed, session_fingerprint)
+                session_ids[session_fingerprint] = session_id
+                sessions_inserted += inserted
+                set_inserted = self._insert_strong_set(conn, import_id, session_id, parsed)
+                sets_inserted += set_inserted
+
+            duplicate_sets = max(0, len(parsed_sets) - sets_inserted)
+            conn.execute(
+                """
+                UPDATE strong_imports
+                SET rows_seen = ?, rows_imported = ?, rows_ignored_before_nutrition = ?,
+                    sessions_inserted = ?, sets_inserted = ?, duplicate_sets = ?, errors_json = ?
+                WHERE id = ?
+                """,
+                (rows_seen, len(parsed_sets), ignored, sessions_inserted, sets_inserted, duplicate_sets, _canonical_json(errors), import_id),
+            )
+            row = conn.execute("SELECT * FROM strong_imports WHERE id = ?", (import_id,)).fetchone()
+        return StrongImportResponse(
+            import_id=import_id,
+            filename=row["filename"],
+            uploaded_at=_parse_datetime(row["uploaded_at"]),
+            nutrition_start_date=nutrition_start,
+            rows_seen=rows_seen,
+            rows_imported=len(parsed_sets),
+            rows_ignored_before_nutrition=ignored,
+            sessions_inserted=sessions_inserted,
+            sets_inserted=sets_inserted,
+            duplicate_sets=duplicate_sets,
+            errors=errors,
+        )
+
+    def strong_imports(self) -> StrongImportListResponse:
+        self._ensure_schema()
+        with self._connect() as conn:
+            rows = conn.execute("SELECT * FROM strong_imports ORDER BY uploaded_at DESC, id DESC LIMIT 25").fetchall()
+        imports = [
+            StrongImportRecord(
+                id=int(row["id"]),
+                filename=row["filename"],
+                uploaded_at=_parse_datetime(row["uploaded_at"]),
+                nutrition_start_date=_parse_date(row["nutrition_start_date"]),
+                rows_seen=int(row["rows_seen"]),
+                rows_imported=int(row["rows_imported"]),
+                rows_ignored_before_nutrition=int(row["rows_ignored_before_nutrition"]),
+                sessions_inserted=int(row["sessions_inserted"]),
+                sets_inserted=int(row["sets_inserted"]),
+                duplicate_sets=int(row["duplicate_sets"]),
+            )
+            for row in rows
+        ]
+        return StrongImportListResponse(count=len(imports), imports=imports)
+
+    def strong_sessions(self, start: date | None = None, end: date | None = None, *, include_sets: bool = True) -> StrongSessionListResponse:
+        self._ensure_schema()
+        _validate_range(start, end)
+        sessions = self._strong_session_records(start, end, include_sets=include_sets)
+        return StrongSessionListResponse(count=len(sessions), sessions=sessions)
+
+    def strong_summary(self, start: date | None = None, end: date | None = None) -> StrongSummaryResponse:
+        self._ensure_schema()
+        _validate_range(start, end)
+        sessions = self._strong_session_records(start, end, include_sets=False)
+        set_rows = self._strong_set_rows(start, end)
+        working_rows = [row for row in set_rows if not bool(row["is_warmup"])]
+        session_dates = {session.workout_date for session in sessions}
+        weekly = self._strong_weekly_summary(sessions, working_rows)
+        exercises = self._strong_exercise_summaries(working_rows)
+        return StrongSummaryResponse(
+            start=start,
+            end=end,
+            nutrition_start_date=self._nutrition_start_date(),
+            session_count=len(sessions),
+            working_set_count=len(working_rows),
+            total_volume=sum(_strong_volume_from_row(row) for row in working_rows),
+            duration_seconds=sum(session.duration_seconds or 0 for session in sessions),
+            exercise_count=len({row["exercise_name"] for row in working_rows}),
+            weekly=weekly,
+            exercises=exercises,
+            nutrition=self._strong_nutrition_comparison(start, end, session_dates),
+            recent_prs=self._strong_recent_prs(working_rows),
+        )
+
+    def strong_exercise_detail(self, exercise_name: str, start: date | None = None, end: date | None = None) -> StrongExerciseDetailResponse:
+        self._ensure_schema()
+        _validate_range(start, end)
+        set_rows = [row for row in self._strong_set_rows(start, end) if row["exercise_name"] == exercise_name]
+        working_rows = [row for row in set_rows if not bool(row["is_warmup"])]
+        by_date: dict[date, list[sqlite3.Row]] = {}
+        for row in working_rows:
+            day = _parse_date(row["workout_date"])
+            if day is not None:
+                by_date.setdefault(day, []).append(row)
+        points = []
+        for day, rows in sorted(by_date.items()):
+            best_1rm = max((_strong_estimated_1rm_from_row(row) or 0 for row in rows), default=0)
+            best_weight = max((float(row["weight"]) for row in rows if row["weight"] is not None), default=None)
+            best_reps = max((float(row["reps"]) for row in rows if row["reps"] is not None), default=None)
+            points.append(
+                StrongExerciseProgressPoint(
+                    date=day,
+                    best_weight=best_weight,
+                    best_reps=best_reps,
+                    best_estimated_1rm=best_1rm or None,
+                    total_volume=sum(_strong_volume_from_row(row) for row in rows),
+                    working_sets=len(rows),
+                )
+            )
+
+        session_ids = sorted({int(row["session_id"]) for row in set_rows})
+        sessions = self._strong_sessions_by_ids(session_ids) if session_ids else []
+        return StrongExerciseDetailResponse(exercise_name=exercise_name, points=points, sessions=sessions)
+
     def _daily_summary_items(
         self,
         start: date | None = None,
@@ -548,6 +745,239 @@ class HealthAutoExportService:
             deltas=deltas,
         )
 
+    def _nutrition_start_date(self) -> date | None:
+        with self._connect() as conn:
+            row = conn.execute("SELECT MIN(record_date) AS first_date FROM health_records WHERE record_date IS NOT NULL").fetchone()
+        return _parse_date(row["first_date"]) if row else None
+
+    def _upsert_strong_session(
+        self,
+        conn: sqlite3.Connection,
+        import_id: int,
+        parsed: StrongParsedSet,
+        fingerprint: str,
+    ) -> tuple[int, int]:
+        cursor = conn.execute(
+            """
+            INSERT OR IGNORE INTO strong_workout_sessions
+                (import_id, workout_date, started_at, workout_name, duration_seconds, workout_notes, fingerprint)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                import_id,
+                parsed.workout_date.isoformat(),
+                parsed.started_at.isoformat(),
+                parsed.workout_name,
+                parsed.duration_seconds,
+                parsed.workout_notes,
+                fingerprint,
+            ),
+        )
+        row = conn.execute("SELECT id FROM strong_workout_sessions WHERE fingerprint = ?", (fingerprint,)).fetchone()
+        return int(row["id"]), int(cursor.rowcount)
+
+    def _insert_strong_set(self, conn: sqlite3.Connection, import_id: int, session_id: int, parsed: StrongParsedSet) -> int:
+        fingerprint = _strong_set_fingerprint(parsed)
+        cursor = conn.execute(
+            """
+            INSERT OR IGNORE INTO strong_workout_sets
+                (import_id, session_id, workout_date, exercise_name, set_order, is_warmup,
+                 weight, reps, distance, seconds, notes, rpe, raw_json, fingerprint)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                import_id,
+                session_id,
+                parsed.workout_date.isoformat(),
+                parsed.exercise_name,
+                parsed.set_order,
+                1 if parsed.is_warmup else 0,
+                parsed.weight,
+                parsed.reps,
+                parsed.distance,
+                parsed.seconds,
+                parsed.notes,
+                parsed.rpe,
+                _canonical_json(parsed.raw),
+                fingerprint,
+            ),
+        )
+        return int(cursor.rowcount)
+
+    def _strong_session_records(self, start: date | None, end: date | None, *, include_sets: bool) -> list[StrongSessionRecord]:
+        query = """
+        SELECT
+            s.*,
+            COUNT(DISTINCT st.exercise_name) AS exercise_count,
+            SUM(CASE WHEN st.is_warmup = 0 THEN 1 ELSE 0 END) AS working_set_count,
+            SUM(CASE WHEN st.is_warmup = 0 AND st.weight IS NOT NULL AND st.reps IS NOT NULL THEN st.weight * st.reps ELSE 0 END) AS total_volume
+        FROM strong_workout_sessions s
+        LEFT JOIN strong_workout_sets st ON st.session_id = s.id
+        WHERE 1 = 1
+        """
+        params: list[Any] = []
+        if start is not None:
+            query += " AND s.workout_date >= ?"
+            params.append(start.isoformat())
+        if end is not None:
+            query += " AND s.workout_date <= ?"
+            params.append(end.isoformat())
+        query += " GROUP BY s.id ORDER BY s.started_at DESC, s.id DESC"
+        with self._connect() as conn:
+            rows = conn.execute(query, params).fetchall()
+            set_map: dict[int, list[StrongSetRecord]] = {}
+            if include_sets and rows:
+                ids = [int(row["id"]) for row in rows]
+                placeholders = ",".join("?" * len(ids))
+                set_rows = conn.execute(
+                    f"SELECT * FROM strong_workout_sets WHERE session_id IN ({placeholders}) ORDER BY session_id, exercise_name, is_warmup DESC, set_order, id",
+                    ids,
+                ).fetchall()
+                for row in set_rows:
+                    set_map.setdefault(int(row["session_id"]), []).append(_strong_set_from_row(row))
+        return [_strong_session_from_row(row, set_map.get(int(row["id"]), [])) for row in rows]
+
+    def _strong_sessions_by_ids(self, session_ids: list[int]) -> list[StrongSessionRecord]:
+        if not session_ids:
+            return []
+        placeholders = ",".join("?" * len(session_ids))
+        query = f"""
+        SELECT
+            s.*,
+            COUNT(DISTINCT st.exercise_name) AS exercise_count,
+            SUM(CASE WHEN st.is_warmup = 0 THEN 1 ELSE 0 END) AS working_set_count,
+            SUM(CASE WHEN st.is_warmup = 0 AND st.weight IS NOT NULL AND st.reps IS NOT NULL THEN st.weight * st.reps ELSE 0 END) AS total_volume
+        FROM strong_workout_sessions s
+        LEFT JOIN strong_workout_sets st ON st.session_id = s.id
+        WHERE s.id IN ({placeholders})
+        GROUP BY s.id
+        ORDER BY s.started_at DESC, s.id DESC
+        """
+        with self._connect() as conn:
+            rows = conn.execute(query, session_ids).fetchall()
+            set_rows = conn.execute(
+                f"SELECT * FROM strong_workout_sets WHERE session_id IN ({placeholders}) ORDER BY session_id, exercise_name, is_warmup DESC, set_order, id",
+                session_ids,
+            ).fetchall()
+        set_map: dict[int, list[StrongSetRecord]] = {}
+        for row in set_rows:
+            set_map.setdefault(int(row["session_id"]), []).append(_strong_set_from_row(row))
+        return [_strong_session_from_row(row, set_map.get(int(row["id"]), [])) for row in rows]
+
+    def _strong_set_rows(self, start: date | None, end: date | None) -> list[sqlite3.Row]:
+        query = """
+        SELECT st.*, s.started_at, s.workout_name, s.duration_seconds, s.workout_notes
+        FROM strong_workout_sets st
+        JOIN strong_workout_sessions s ON s.id = st.session_id
+        WHERE 1 = 1
+        """
+        params: list[Any] = []
+        if start is not None:
+            query += " AND st.workout_date >= ?"
+            params.append(start.isoformat())
+        if end is not None:
+            query += " AND st.workout_date <= ?"
+            params.append(end.isoformat())
+        query += " ORDER BY st.workout_date, st.session_id, st.exercise_name, st.id"
+        with self._connect() as conn:
+            return conn.execute(query, params).fetchall()
+
+    def _strong_weekly_summary(self, sessions: list[StrongSessionRecord], working_rows: list[sqlite3.Row]) -> list[StrongWeeklySummary]:
+        session_weeks: dict[date, list[StrongSessionRecord]] = {}
+        for session in sessions:
+            session_weeks.setdefault(_week_start(session.workout_date), []).append(session)
+        rows_by_week: dict[date, list[sqlite3.Row]] = {}
+        for row in working_rows:
+            day = _parse_date(row["workout_date"])
+            if day is not None:
+                rows_by_week.setdefault(_week_start(day), []).append(row)
+        nutrition_by_date = {item.date: item for item in self._daily_summary_items(include_hidden=True)}
+        output: list[StrongWeeklySummary] = []
+        for week in sorted(set(session_weeks) | set(rows_by_week)):
+            week_sessions = session_weeks.get(week, [])
+            week_rows = rows_by_week.get(week, [])
+            days = [week + _date_delta(i) for i in range(7)]
+            nutrition_days = [nutrition_by_date[day] for day in days if day in nutrition_by_date]
+            output.append(
+                StrongWeeklySummary(
+                    week_start=week,
+                    session_count=len(week_sessions),
+                    working_set_count=len(week_rows),
+                    total_volume=sum(_strong_volume_from_row(row) for row in week_rows),
+                    duration_seconds=sum(session.duration_seconds or 0 for session in week_sessions),
+                    exercise_count=len({row["exercise_name"] for row in week_rows}),
+                    avg_calories=_avg([day.calories for day in nutrition_days]),
+                    avg_protein=_avg([day.protein for day in nutrition_days]),
+                )
+            )
+        return output
+
+    def _strong_exercise_summaries(self, working_rows: list[sqlite3.Row]) -> list[StrongExerciseSummary]:
+        grouped: dict[str, list[sqlite3.Row]] = {}
+        for row in working_rows:
+            grouped.setdefault(row["exercise_name"], []).append(row)
+        summaries: list[StrongExerciseSummary] = []
+        for exercise, rows in grouped.items():
+            ordered = sorted(rows, key=lambda row: (row["workout_date"], row["id"]))
+            first_best = max((_strong_estimated_1rm_from_row(row) or 0 for row in ordered[: max(1, min(5, len(ordered)))]), default=0)
+            recent_best = max((_strong_estimated_1rm_from_row(row) or 0 for row in ordered[-5:]), default=0)
+            summaries.append(
+                StrongExerciseSummary(
+                    exercise_name=exercise,
+                    sessions=len({int(row["session_id"]) for row in rows}),
+                    working_sets=len(rows),
+                    total_volume=sum(_strong_volume_from_row(row) for row in rows),
+                    best_weight=max((float(row["weight"]) for row in rows if row["weight"] is not None), default=None),
+                    best_reps=max((float(row["reps"]) for row in rows if row["reps"] is not None), default=None),
+                    best_estimated_1rm=max((_strong_estimated_1rm_from_row(row) or 0 for row in rows), default=0) or None,
+                    last_performed=max((_parse_date(row["workout_date"]) for row in rows if _parse_date(row["workout_date"]) is not None), default=None),
+                    recent_estimated_1rm=recent_best or None,
+                    estimated_1rm_delta=(recent_best - first_best) if recent_best and first_best else None,
+                )
+            )
+        return sorted(summaries, key=lambda item: (item.last_performed or date.min, item.total_volume), reverse=True)
+
+    def _strong_nutrition_comparison(self, start: date | None, end: date | None, session_dates: set[date]) -> StrongNutritionComparison:
+        days = self._daily_summary_items(start, end, include_hidden=True)
+        training_days = [day for day in days if day.date in session_dates]
+        rest_days = [day for day in days if day.date not in session_dates]
+        return StrongNutritionComparison(
+            training_day_count=len(training_days),
+            rest_day_count=len(rest_days),
+            training_avg_calories=_avg([day.calories for day in training_days]),
+            rest_avg_calories=_avg([day.calories for day in rest_days]),
+            training_avg_protein=_avg([day.protein for day in training_days]),
+            rest_avg_protein=_avg([day.protein for day in rest_days]),
+            training_avg_weight=_avg([day.weight for day in training_days]),
+            rest_avg_weight=_avg([day.weight for day in rest_days]),
+            training_avg_active_energy=_avg([day.active_energy for day in training_days]),
+            rest_avg_active_energy=_avg([day.active_energy for day in rest_days]),
+        )
+
+    def _strong_recent_prs(self, working_rows: list[sqlite3.Row]) -> list[StrongRecentPr]:
+        best_by_exercise: dict[str, float] = {}
+        prs: list[StrongRecentPr] = []
+        for row in sorted(working_rows, key=lambda item: (item["workout_date"], item["id"])):
+            estimate = _strong_estimated_1rm_from_row(row)
+            if estimate is None:
+                continue
+            exercise = row["exercise_name"]
+            previous = best_by_exercise.get(exercise)
+            if previous is None or estimate > previous + 0.01:
+                best_by_exercise[exercise] = estimate
+                day = _parse_date(row["workout_date"])
+                if day is not None:
+                    prs.append(
+                        StrongRecentPr(
+                            date=day,
+                            exercise_name=exercise,
+                            weight=row["weight"],
+                            reps=row["reps"],
+                            estimated_1rm=estimate,
+                        )
+                    )
+        return prs[-10:][::-1]
+
     def close(self) -> None:
         return None
 
@@ -594,6 +1024,47 @@ class HealthAutoExportService:
                     raw_json TEXT NOT NULL,
                     fingerprint TEXT NOT NULL UNIQUE
                 );
+                CREATE TABLE IF NOT EXISTS strong_imports (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    filename TEXT NOT NULL,
+                    uploaded_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    payload_hash TEXT NOT NULL UNIQUE,
+                    nutrition_start_date TEXT,
+                    rows_seen INTEGER NOT NULL DEFAULT 0,
+                    rows_imported INTEGER NOT NULL DEFAULT 0,
+                    rows_ignored_before_nutrition INTEGER NOT NULL DEFAULT 0,
+                    sessions_inserted INTEGER NOT NULL DEFAULT 0,
+                    sets_inserted INTEGER NOT NULL DEFAULT 0,
+                    duplicate_sets INTEGER NOT NULL DEFAULT 0,
+                    errors_json TEXT NOT NULL DEFAULT '[]'
+                );
+                CREATE TABLE IF NOT EXISTS strong_workout_sessions (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    import_id INTEGER NOT NULL REFERENCES strong_imports(id),
+                    workout_date TEXT NOT NULL,
+                    started_at TEXT NOT NULL,
+                    workout_name TEXT NOT NULL,
+                    duration_seconds INTEGER,
+                    workout_notes TEXT,
+                    fingerprint TEXT NOT NULL UNIQUE
+                );
+                CREATE TABLE IF NOT EXISTS strong_workout_sets (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    import_id INTEGER NOT NULL REFERENCES strong_imports(id),
+                    session_id INTEGER NOT NULL REFERENCES strong_workout_sessions(id),
+                    workout_date TEXT NOT NULL,
+                    exercise_name TEXT NOT NULL,
+                    set_order TEXT NOT NULL,
+                    is_warmup INTEGER NOT NULL DEFAULT 0,
+                    weight REAL,
+                    reps REAL,
+                    distance REAL,
+                    seconds REAL,
+                    notes TEXT,
+                    rpe REAL,
+                    raw_json TEXT NOT NULL,
+                    fingerprint TEXT NOT NULL UNIQUE
+                );
                 CREATE TABLE IF NOT EXISTS dashboard_preferences (
                     id INTEGER PRIMARY KEY CHECK (id = 1),
                     preferences_json TEXT NOT NULL,
@@ -601,6 +1072,10 @@ class HealthAutoExportService:
                 );
                 CREATE INDEX IF NOT EXISTS idx_health_records_date_metric_source
                     ON health_records (record_date, metric_name, source);
+                CREATE INDEX IF NOT EXISTS idx_strong_sessions_date
+                    ON strong_workout_sessions (workout_date, started_at);
+                CREATE INDEX IF NOT EXISTS idx_strong_sets_exercise_date
+                    ON strong_workout_sets (exercise_name, workout_date);
                 """
             )
         self._initialized = True
@@ -789,6 +1264,163 @@ def _workout_from_row(row: sqlite3.Row) -> WorkoutRecord:
     )
 
 
+def parse_strong_csv(content: bytes, nutrition_start: date) -> tuple[list[StrongParsedSet], int, int, list[str]]:
+    try:
+        text = content.decode("utf-8-sig")
+    except UnicodeDecodeError as exc:
+        raise ValueError("Strong CSV must be UTF-8 encoded") from exc
+    reader = csv.DictReader(io.StringIO(text))
+    if reader.fieldnames is None:
+        raise ValueError("Strong CSV is empty")
+    missing = sorted(STRONG_REQUIRED_COLUMNS - set(reader.fieldnames))
+    if missing:
+        raise ValueError(f"Strong CSV is missing required columns: {', '.join(missing)}")
+
+    parsed: list[StrongParsedSet] = []
+    errors: list[str] = []
+    rows_seen = 0
+    ignored = 0
+    for row_number, row in enumerate(reader, start=2):
+        rows_seen += 1
+        started_at = _parse_datetime(row.get("Date"))
+        if started_at is None:
+            errors.append(f"Row {row_number}: invalid Date")
+            continue
+        workout_date = started_at.date()
+        if workout_date < nutrition_start:
+            ignored += 1
+            continue
+        exercise_name = (row.get("Exercise Name") or "").strip()
+        workout_name = (row.get("Workout Name") or "Workout").strip() or "Workout"
+        set_order = (row.get("Set Order") or "").strip()
+        if not exercise_name or not set_order:
+            errors.append(f"Row {row_number}: missing exercise or set order")
+            continue
+        parsed.append(
+            StrongParsedSet(
+                started_at=started_at,
+                workout_date=workout_date,
+                workout_name=workout_name,
+                duration_seconds=_parse_strong_duration(row.get("Duration")),
+                exercise_name=exercise_name,
+                set_order=set_order,
+                is_warmup=set_order.upper() == "W",
+                weight=_float_or_none(row.get("Weight")),
+                reps=_float_or_none(row.get("Reps")),
+                distance=_float_or_none(row.get("Distance")),
+                seconds=_float_or_none(row.get("Seconds")),
+                notes=_blank_to_none(row.get("Notes")),
+                workout_notes=_blank_to_none(row.get("Workout Notes")),
+                rpe=_float_or_none(row.get("RPE")),
+                raw=dict(row),
+            )
+        )
+    return parsed, rows_seen, ignored, errors
+
+
+def _strong_session_fingerprint(parsed: StrongParsedSet) -> str:
+    return _fingerprint("strong-session", parsed.started_at.isoformat(), parsed.workout_name, parsed.duration_seconds)
+
+
+def _strong_set_fingerprint(parsed: StrongParsedSet) -> str:
+    return _fingerprint(
+        "strong-set",
+        parsed.started_at.isoformat(),
+        parsed.workout_name,
+        parsed.exercise_name,
+        parsed.set_order,
+        parsed.weight,
+        parsed.reps,
+        parsed.distance,
+        parsed.seconds,
+    )
+
+
+def _strong_set_from_row(row: sqlite3.Row) -> StrongSetRecord:
+    volume = _strong_volume_from_row(row)
+    estimate = _strong_estimated_1rm_from_row(row)
+    return StrongSetRecord(
+        id=int(row["id"]),
+        exercise_name=row["exercise_name"],
+        set_order=row["set_order"],
+        is_warmup=bool(row["is_warmup"]),
+        weight=row["weight"],
+        reps=row["reps"],
+        distance=row["distance"],
+        seconds=row["seconds"],
+        rpe=row["rpe"],
+        volume=volume if not bool(row["is_warmup"]) else None,
+        estimated_1rm=estimate if not bool(row["is_warmup"]) else None,
+        notes=row["notes"],
+    )
+
+
+def _strong_session_from_row(row: sqlite3.Row, sets: list[StrongSetRecord]) -> StrongSessionRecord:
+    started_at = _parse_datetime(row["started_at"])
+    workout_date = _parse_date(row["workout_date"])
+    return StrongSessionRecord(
+        id=int(row["id"]),
+        workout_date=workout_date or date.min,
+        started_at=started_at or datetime.min,
+        workout_name=row["workout_name"],
+        duration_seconds=row["duration_seconds"],
+        workout_notes=row["workout_notes"],
+        exercise_count=int(row["exercise_count"] or 0),
+        working_set_count=int(row["working_set_count"] or 0),
+        total_volume=float(row["total_volume"] or 0),
+        sets=sets,
+    )
+
+
+def _strong_volume_from_row(row: sqlite3.Row) -> float:
+    if row["weight"] is None or row["reps"] is None:
+        return 0.0
+    return float(row["weight"]) * float(row["reps"])
+
+
+def _strong_estimated_1rm_from_row(row: sqlite3.Row) -> float | None:
+    if row["weight"] is None or row["reps"] is None:
+        return None
+    weight = float(row["weight"])
+    reps = float(row["reps"])
+    if weight <= 0 or reps <= 0:
+        return None
+    return weight * (1 + reps / 30)
+
+
+def _parse_strong_duration(value: str | None) -> int | None:
+    if not value:
+        return None
+    total = 0
+    for part in value.strip().split():
+        if part.endswith("h"):
+            hours = _float_or_none(part[:-1])
+            if hours is not None:
+                total += int(hours * 3600)
+        elif part.endswith("m"):
+            minutes = _float_or_none(part[:-1])
+            if minutes is not None:
+                total += int(minutes * 60)
+        elif part.endswith("s"):
+            seconds = _float_or_none(part[:-1])
+            if seconds is not None:
+                total += int(seconds)
+    return total or None
+
+
+def _week_start(day: date) -> date:
+    return day - timedelta(days=day.weekday())
+
+
+def _date_delta(days: int) -> timedelta:
+    return timedelta(days=days)
+
+
+def _avg(values: Iterable[float | None]) -> float | None:
+    nums = [float(value) for value in values if value is not None]
+    return sum(nums) / len(nums) if nums else None
+
+
 def _summary_key(metric_name: str) -> str | None:
     normalized = metric_name.lower().replace(" ", "_").replace("-", "_")
     aliases = {
@@ -933,6 +1565,13 @@ def _str_or_none(value: Any) -> str | None:
     if value is None:
         return None
     return str(value)
+
+
+def _blank_to_none(value: Any) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
 
 
 def _float_or_none(value: Any) -> float | None:

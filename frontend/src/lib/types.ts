@@ -94,6 +94,162 @@ export interface IngestStatus {
   last_date: string | null;
 }
 
+export interface WorkoutRecord {
+  id: number;
+  workout_id: string | null;
+  name: string | null;
+  start_date: string | null;
+  end_date: string | null;
+  duration_seconds: number | null;
+  energy: number | null;
+  raw: Record<string, unknown>;
+}
+
+export interface WorkoutListResponse {
+  count: number;
+  workouts: WorkoutRecord[];
+}
+
+export interface StrongImportResponse {
+  import_id: number;
+  filename: string;
+  uploaded_at: string | null;
+  nutrition_start_date: string;
+  rows_seen: number;
+  rows_imported: number;
+  rows_ignored_before_nutrition: number;
+  sessions_inserted: number;
+  sets_inserted: number;
+  duplicate_sets: number;
+  errors: string[];
+}
+
+export interface StrongImportRecord {
+  id: number;
+  filename: string;
+  uploaded_at: string | null;
+  nutrition_start_date: string | null;
+  rows_seen: number;
+  rows_imported: number;
+  rows_ignored_before_nutrition: number;
+  sessions_inserted: number;
+  sets_inserted: number;
+  duplicate_sets: number;
+}
+
+export interface StrongImportListResponse {
+  count: number;
+  imports: StrongImportRecord[];
+}
+
+export interface StrongSetRecord {
+  id: number;
+  exercise_name: string;
+  set_order: string;
+  is_warmup: boolean;
+  weight: number | null;
+  reps: number | null;
+  distance: number | null;
+  seconds: number | null;
+  rpe: number | null;
+  volume: number | null;
+  estimated_1rm: number | null;
+  notes: string | null;
+}
+
+export interface StrongSessionRecord {
+  id: number;
+  workout_date: string;
+  started_at: string;
+  workout_name: string;
+  duration_seconds: number | null;
+  workout_notes: string | null;
+  exercise_count: number;
+  working_set_count: number;
+  total_volume: number;
+  sets: StrongSetRecord[];
+}
+
+export interface StrongSessionListResponse {
+  count: number;
+  sessions: StrongSessionRecord[];
+}
+
+export interface StrongWeeklySummary {
+  week_start: string;
+  session_count: number;
+  working_set_count: number;
+  total_volume: number;
+  duration_seconds: number;
+  exercise_count: number;
+  avg_calories: number | null;
+  avg_protein: number | null;
+}
+
+export interface StrongExerciseSummary {
+  exercise_name: string;
+  sessions: number;
+  working_sets: number;
+  total_volume: number;
+  best_weight: number | null;
+  best_reps: number | null;
+  best_estimated_1rm: number | null;
+  last_performed: string | null;
+  recent_estimated_1rm: number | null;
+  estimated_1rm_delta: number | null;
+}
+
+export interface StrongNutritionComparison {
+  training_day_count: number;
+  rest_day_count: number;
+  training_avg_calories: number | null;
+  rest_avg_calories: number | null;
+  training_avg_protein: number | null;
+  rest_avg_protein: number | null;
+  training_avg_weight: number | null;
+  rest_avg_weight: number | null;
+  training_avg_active_energy: number | null;
+  rest_avg_active_energy: number | null;
+}
+
+export interface StrongRecentPr {
+  date: string;
+  exercise_name: string;
+  weight: number | null;
+  reps: number | null;
+  estimated_1rm: number | null;
+}
+
+export interface StrongSummaryResponse {
+  start: string | null;
+  end: string | null;
+  nutrition_start_date: string | null;
+  session_count: number;
+  working_set_count: number;
+  total_volume: number;
+  duration_seconds: number;
+  exercise_count: number;
+  weekly: StrongWeeklySummary[];
+  exercises: StrongExerciseSummary[];
+  nutrition: StrongNutritionComparison;
+  recent_prs: StrongRecentPr[];
+}
+
+export interface StrongExerciseProgressPoint {
+  date: string;
+  best_weight: number | null;
+  best_reps: number | null;
+  best_estimated_1rm: number | null;
+  total_volume: number;
+  working_sets: number;
+}
+
+export interface StrongExerciseDetailResponse {
+  exercise_name: string;
+  points: StrongExerciseProgressPoint[];
+  sessions: StrongSessionRecord[];
+}
+
 export type SummaryField = "calories" | "protein" | "carbohydrates" | "fat" | "water" | "weight" | "steps" | "active_energy";
 
 export interface FieldMeta {

@@ -12,7 +12,7 @@ from hashlib import sha256
 from pathlib import Path
 from urllib.parse import parse_qs
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response
+from fastapi import Depends, FastAPI, File, Header, HTTPException, Request, Response, UploadFile
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -30,6 +30,11 @@ from macrofactor_scraper.models import (
     MetricListResponse,
     MetricRecordsResponse,
     RepairReport,
+    StrongExerciseDetailResponse,
+    StrongImportListResponse,
+    StrongImportResponse,
+    StrongSessionListResponse,
+    StrongSummaryResponse,
     WorkoutListResponse,
 )
 
@@ -271,6 +276,62 @@ async def workouts(
 ) -> WorkoutListResponse:
     try:
         return service.workouts(start, end)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.post("/v1/strong/import", response_model=StrongImportResponse, dependencies=[Depends(require_private_access)])
+async def import_strong_csv(
+    file: UploadFile = File(...),
+    service: HealthAutoExportService = Depends(get_health_export_service),
+) -> StrongImportResponse:
+    filename = file.filename or "strong.csv"
+    if not filename.lower().endswith(".csv"):
+        raise HTTPException(status_code=422, detail="Strong export must be a CSV file")
+    try:
+        return service.import_strong_csv(filename, await file.read())
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.get("/v1/strong/imports", response_model=StrongImportListResponse, dependencies=[Depends(require_private_access)])
+async def strong_imports(service: HealthAutoExportService = Depends(get_health_export_service)) -> StrongImportListResponse:
+    return service.strong_imports()
+
+
+@app.get("/v1/strong/summary", response_model=StrongSummaryResponse, dependencies=[Depends(require_private_access)])
+async def strong_summary(
+    start: date | None = None,
+    end: date | None = None,
+    service: HealthAutoExportService = Depends(get_health_export_service),
+) -> StrongSummaryResponse:
+    try:
+        return service.strong_summary(start, end)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.get("/v1/strong/sessions", response_model=StrongSessionListResponse, dependencies=[Depends(require_private_access)])
+async def strong_sessions(
+    start: date | None = None,
+    end: date | None = None,
+    service: HealthAutoExportService = Depends(get_health_export_service),
+) -> StrongSessionListResponse:
+    try:
+        return service.strong_sessions(start, end)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.get("/v1/strong/exercises/{exercise_name}", response_model=StrongExerciseDetailResponse, dependencies=[Depends(require_private_access)])
+async def strong_exercise_detail(
+    exercise_name: str,
+    start: date | None = None,
+    end: date | None = None,
+    service: HealthAutoExportService = Depends(get_health_export_service),
+) -> StrongExerciseDetailResponse:
+    try:
+        return service.strong_exercise_detail(exercise_name, start, end)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 

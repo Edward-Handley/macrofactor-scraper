@@ -181,6 +181,146 @@ class WorkoutListResponse(BaseModel):
     workouts: list[WorkoutRecord]
 
 
+class StrongImportResponse(BaseModel):
+    import_id: int
+    filename: str
+    uploaded_at: dt.datetime | None = None
+    nutrition_start_date: dt.date
+    rows_seen: int
+    rows_imported: int
+    rows_ignored_before_nutrition: int
+    sessions_inserted: int
+    sets_inserted: int
+    duplicate_sets: int
+    errors: list[str] = Field(default_factory=list)
+
+
+class StrongImportRecord(BaseModel):
+    id: int
+    filename: str
+    uploaded_at: dt.datetime | None = None
+    nutrition_start_date: dt.date | None = None
+    rows_seen: int
+    rows_imported: int
+    rows_ignored_before_nutrition: int
+    sessions_inserted: int
+    sets_inserted: int
+    duplicate_sets: int
+
+
+class StrongImportListResponse(BaseModel):
+    count: int
+    imports: list[StrongImportRecord]
+
+
+class StrongSetRecord(BaseModel):
+    id: int
+    exercise_name: str
+    set_order: str
+    is_warmup: bool
+    weight: float | None = None
+    reps: float | None = None
+    distance: float | None = None
+    seconds: float | None = None
+    rpe: float | None = None
+    volume: float | None = None
+    estimated_1rm: float | None = None
+    notes: str | None = None
+
+
+class StrongSessionRecord(BaseModel):
+    id: int
+    workout_date: dt.date
+    started_at: dt.datetime
+    workout_name: str
+    duration_seconds: int | None = None
+    workout_notes: str | None = None
+    exercise_count: int
+    working_set_count: int
+    total_volume: float
+    sets: list[StrongSetRecord] = Field(default_factory=list)
+
+
+class StrongSessionListResponse(BaseModel):
+    count: int
+    sessions: list[StrongSessionRecord]
+
+
+class StrongWeeklySummary(BaseModel):
+    week_start: dt.date
+    session_count: int
+    working_set_count: int
+    total_volume: float
+    duration_seconds: int
+    exercise_count: int
+    avg_calories: float | None = None
+    avg_protein: float | None = None
+
+
+class StrongExerciseSummary(BaseModel):
+    exercise_name: str
+    sessions: int
+    working_sets: int
+    total_volume: float
+    best_weight: float | None = None
+    best_reps: float | None = None
+    best_estimated_1rm: float | None = None
+    last_performed: dt.date | None = None
+    recent_estimated_1rm: float | None = None
+    estimated_1rm_delta: float | None = None
+
+
+class StrongNutritionComparison(BaseModel):
+    training_day_count: int
+    rest_day_count: int
+    training_avg_calories: float | None = None
+    rest_avg_calories: float | None = None
+    training_avg_protein: float | None = None
+    rest_avg_protein: float | None = None
+    training_avg_weight: float | None = None
+    rest_avg_weight: float | None = None
+    training_avg_active_energy: float | None = None
+    rest_avg_active_energy: float | None = None
+
+
+class StrongRecentPr(BaseModel):
+    date: dt.date
+    exercise_name: str
+    weight: float | None = None
+    reps: float | None = None
+    estimated_1rm: float | None = None
+
+
+class StrongSummaryResponse(BaseModel):
+    start: dt.date | None = None
+    end: dt.date | None = None
+    nutrition_start_date: dt.date | None = None
+    session_count: int
+    working_set_count: int
+    total_volume: float
+    duration_seconds: int
+    exercise_count: int
+    weekly: list[StrongWeeklySummary]
+    exercises: list[StrongExerciseSummary]
+    nutrition: StrongNutritionComparison
+    recent_prs: list[StrongRecentPr]
+
+
+class StrongExerciseProgressPoint(BaseModel):
+    date: dt.date
+    best_weight: float | None = None
+    best_reps: float | None = None
+    best_estimated_1rm: float | None = None
+    total_volume: float
+    working_sets: int
+
+
+class StrongExerciseDetailResponse(BaseModel):
+    exercise_name: str
+    points: list[StrongExerciseProgressPoint]
+    sessions: list[StrongSessionRecord]
+
+
 class RepairDayDelta(BaseModel):
     date: dt.date
     metric_name: str
