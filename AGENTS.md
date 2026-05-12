@@ -37,6 +37,7 @@ macrofactor-scraper/
 │   ├── api.py              ← FastAPI app, all endpoints
 │   ├── health_export.py    ← Core service: ingest, aggregation, diagnostics, repair
 │   ├── garmin.py           ← Garmin Connect sync: extractors, GarminSyncService, background loop
+│   ├── coach.py            ← Coach prompt builder; uses Garmin as authoritative sleep/steps/RHR/HRV source
 │   ├── models.py           ← Pydantic models for all responses
 │   ├── config.py           ← Settings (reads .env)
 │   ├── repair.py           ← CLI for retroactive cleanup of stacked rows
@@ -280,6 +281,19 @@ curl -H "X-API-Key: $HEALTH_EXPORT_API_KEY" \
 ```
 
 Look at `extracted.*` and `payloads.*.numeric_matches`. If a value appears at an unexpected path, add it to the relevant `_extract_*` function and add a test in `tests/test_garmin.py`.
+
+### Garmin as authoritative source in coach prompt
+
+`coach.py` `build_coach_data()` queries `health_records` for Garmin metrics for yesterday via `_get_garmin_values(service, date)`. Priority:
+
+| Coach field | Source |
+|-------------|--------|
+| `sleep_hours` | Garmin `sleep_minutes ÷ 60` → daily_log fallback |
+| `sleep_score` | Garmin `sleep_score` → daily_log fallback |
+| `rhr` | Garmin `resting_heart_rate` → daily_log fallback |
+| `hrv_overnight` | Garmin `hrv_overnight` → daily_log fallback |
+| `steps` | Garmin `garmin_steps` → Apple Health fallback |
+| `sleep_quality` | daily_log only (subjective, no Garmin equivalent) |
 
 ---
 

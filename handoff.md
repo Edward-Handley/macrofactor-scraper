@@ -89,6 +89,21 @@ If a metric is missing, check `/v1/garmin/debug/{date}` with the ingest key to s
 
 Sparklines on the Health tab will populate after a few days of syncs.
 
+### Coach Prompt — Garmin as Authoritative Source (`src/macrofactor_scraper/coach.py`)
+
+`build_coach_data()` now queries `health_records` for Garmin data (yesterday) via new helper `_get_garmin_values(service, date)` and uses it with this priority:
+
+| Field | Source priority |
+|-------|----------------|
+| `sleep_hours` | Garmin `sleep_minutes ÷ 60` → daily_log `sleep_hours` |
+| `sleep_score` | Garmin `sleep_score` → daily_log `sleep_score` |
+| `rhr` | Garmin `resting_heart_rate` → daily_log `rhr` |
+| `hrv_overnight` | Garmin `hrv_overnight` → daily_log `hrv_overnight` |
+| `steps` | Garmin `garmin_steps` → Apple Health `step_count` |
+| `sleep_quality` | daily_log only (subjective 1–10, no Garmin equivalent) |
+
+No schema changes. No new API endpoints. No frontend changes.
+
 ## Notes For Next Agent
 
 - Do not read or expose `.env` secrets.
