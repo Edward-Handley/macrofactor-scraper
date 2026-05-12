@@ -152,10 +152,10 @@ export function useGarminCategories() {
   });
 }
 
-export function useGarminSeries(metric: string, days = 30) {
+export function useGarminSeries(metric: string, options: { days?: number; start?: string; end?: string } = { days: 30 }) {
   return useQuery({
-    queryKey: ["garmin-series", metric, days],
-    queryFn: () => api.garmin.series(metric, days),
+    queryKey: ["garmin-series", metric, options],
+    queryFn: () => api.garmin.series(metric, options),
     staleTime: 300_000,
     enabled: !!metric,
   });

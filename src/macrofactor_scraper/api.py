@@ -686,24 +686,37 @@ async def garmin_categories() -> dict:
 async def garmin_series(
     metric_name: str,
     days: int = 30,
+    start: str | None = None,
+    end: str | None = None,
     service: HealthAutoExportService = Depends(get_health_export_service),
 ) -> dict:
-    """Return a time series of a single Garmin metric over the last N days."""
+    """Return a time series of a single Garmin metric. Use start+end for date range or days for lookback."""
     from macrofactor_scraper.garmin import ALL_GARMIN_METRICS, GARMIN_METRIC_UNITS
     if metric_name not in ALL_GARMIN_METRICS:
         raise HTTPException(status_code=404, detail=f"Unknown Garmin metric: {metric_name!r}")
-    if not (1 <= days <= 365):
-        raise HTTPException(status_code=400, detail="days must be 1–365")
     with service._connect() as conn:
-        rows = conn.execute(
-            """
-            SELECT record_date, quantity FROM health_records
-            WHERE source = 'Garmin' AND metric_name = ?
-              AND record_date >= date('now', ? || ' days')
-            ORDER BY record_date ASC
-            """,
-            (metric_name, f"-{days}"),
-        ).fetchall()
+        if start and end:
+            rows = conn.execute(
+                """
+                SELECT record_date, quantity FROM health_records
+                WHERE source = 'Garmin' AND metric_name = ?
+                  AND record_date BETWEEN ? AND ?
+                ORDER BY record_date ASC
+                """,
+                (metric_name, start, end),
+            ).fetchall()
+        else:
+            if not (1 <= days <= 365):
+                raise HTTPException(status_code=400, detail="days must be 1–365")
+            rows = conn.execute(
+                """
+                SELECT record_date, quantity FROM health_records
+                WHERE source = 'Garmin' AND metric_name = ?
+                  AND record_date >= date('now', ? || ' days')
+                ORDER BY record_date ASC
+                """,
+                (metric_name, f"-{days}"),
+            ).fetchall()
     units = GARMIN_METRIC_UNITS.get(metric_name, "")
     return {
         "metric": metric_name,

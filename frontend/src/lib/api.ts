@@ -142,8 +142,19 @@ export const api = {
         { method: "POST" }
       ),
     categories: () => request<import("./types").GarminCategoriesResponse>("/v1/garmin/categories"),
-    series: (metric: string, days = 30) =>
-      request<import("./types").GarminSeriesResponse>(`/v1/garmin/series/${metric}?days=${days}`),
+    series: (metric: string, options: { days?: number; start?: string; end?: string } = {}) => {
+      const p = new URLSearchParams();
+      if (options.start && options.end) {
+        p.set("start", options.start);
+        p.set("end", options.end);
+      } else if (options.days) {
+        p.set("days", String(options.days));
+      }
+      const qs = p.toString();
+      return request<import("./types").GarminSeriesResponse>(
+        `/v1/garmin/series/${metric}${qs ? `?${qs}` : ""}`
+      );
+    },
   },
 
   coach: {

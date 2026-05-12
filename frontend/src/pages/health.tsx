@@ -44,8 +44,8 @@ function labelFor(metric: string): string {
 
 function Sparkline({ metric, days }: { metric: string; days: number }) {
   const { data } = useQuery({
-    queryKey: ["garmin-series", metric, days],
-    queryFn: () => api.garmin.series(metric, days),
+    queryKey: ["garmin-series", metric, { days }],
+    queryFn: () => api.garmin.series(metric, { days }),
     staleTime: 300_000,
   });
 
