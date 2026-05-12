@@ -1429,6 +1429,62 @@ class HealthAutoExportService:
                     preferences_json TEXT NOT NULL,
                     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
                 );
+                CREATE TABLE IF NOT EXISTS cut_phases (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name TEXT NOT NULL,
+                    start_date TEXT NOT NULL,
+                    end_date TEXT,
+                    target_weight_kg REAL,
+                    target_calories INTEGER,
+                    notes TEXT,
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                );
+                CREATE TABLE IF NOT EXISTS daily_logs (
+                    log_date TEXT PRIMARY KEY,
+                    cut_phase TEXT,
+                    week_number INTEGER,
+                    training_type TEXT,
+                    gym_done INTEGER,
+                    gym_minutes INTEGER,
+                    gym_rpe REAL,
+                    gym_notes TEXT,
+                    cardio_type TEXT,
+                    cardio_minutes INTEGER,
+                    cardio_avg_hr INTEGER,
+                    vyvanse_taken INTEGER,
+                    vyvanse_time TEXT,
+                    dex_booster_taken INTEGER,
+                    dex_time TEXT,
+                    sleep_hours REAL,
+                    sleep_quality INTEGER,
+                    sleep_score INTEGER,
+                    am_energy INTEGER,
+                    pm_energy INTEGER,
+                    motivation INTEGER,
+                    hunger INTEGER,
+                    mood INTEGER,
+                    stress INTEGER,
+                    soreness INTEGER,
+                    digestion INTEGER,
+                    rhr INTEGER,
+                    hrv_overnight INTEGER,
+                    water_litres REAL,
+                    notes TEXT,
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                );
+                CREATE TABLE IF NOT EXISTS body_measurements (
+                    measure_date TEXT PRIMARY KEY,
+                    waist_cm REAL,
+                    chest_cm REAL,
+                    l_arm_cm REAL,
+                    r_arm_cm REAL,
+                    l_thigh_cm REAL,
+                    r_thigh_cm REAL,
+                    hip_cm REAL,
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                );
                 CREATE INDEX IF NOT EXISTS idx_health_records_date_metric_source
                     ON health_records (record_date, metric_name, source);
                 CREATE INDEX IF NOT EXISTS idx_strong_sessions_date
@@ -1438,6 +1494,219 @@ class HealthAutoExportService:
                 """
             )
         self._initialized = True
+
+    # ─── Garmin metric upsert ────────────────────────────────────────────────
+
+    def upsert_garmin_metric(self, metric_name: str, units: str, record_date: str, quantity: float) -> bool:
+        """Insert or update a single Garmin-sourced metric for a date. Returns True if value changed."""
+        self._ensure_schema()
+        source = "Garmin"
+        fingerprint = _fingerprint("garmin_v1", metric_name, record_date, source)
+        with self._connect() as conn:
+            existing = conn.execute(
+                "SELECT id, quantity FROM health_records WHERE fingerprint = ?",
+                (fingerprint,),
+            ).fetchone()
+            if existing:
+                if abs(float(existing["quantity"]) - quantity) > 0.001:
+                    conn.execute(
+                        "UPDATE health_records SET quantity = ? WHERE fingerprint = ?",
+                        (quantity, fingerprint),
+                    )
+                    return True
+                return False
+            # Need a synthetic batch — create or reuse a "garmin" batch keyed to the date
+            batch_key = _fingerprint("garmin_batch", record_date)
+            conn.execute(
+                "INSERT OR IGNORE INTO ingest_batches (payload_hash, headers_json, payload_json) VALUES (?, '{}', ?)",
+                (batch_key, f'{{"garmin_date":"{record_date}"}}'  ),
+            )
+            batch_row = conn.execute(
+                "SELECT id FROM ingest_batches WHERE payload_hash = ?", (batch_key,)
+            ).fetchone()
+            batch_id = int(batch_row["id"])
+            conn.execute(
+                """
+                INSERT INTO health_records
+                    (batch_id, metric_name, units, record_date, quantity, source, raw_json, fingerprint)
+                VALUES (?, ?, ?, ?, ?, ?, '{}', ?)
+                """,
+                (batch_id, metric_name, units, record_date, quantity, source, fingerprint),
+            )
+            return True
+
+    # ─── Cut phases ──────────────────────────────────────────────────────────
+
+    def get_cut_phases(self) -> list[dict]:
+        self._ensure_schema()
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM cut_phases ORDER BY start_date DESC"
+            ).fetchall()
+            return [dict(r) for r in rows]
+
+    def get_active_cut_phase(self) -> dict | None:
+        self._ensure_schema()
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM cut_phases WHERE end_date IS NULL ORDER BY start_date DESC LIMIT 1"
+            ).fetchone()
+            return dict(row) if row else None
+
+    def create_cut_phase(self, name: str, start_date: str, end_date: str | None,
+                         target_weight_kg: float | None, target_calories: int | None, notes: str | None) -> dict:
+        self._ensure_schema()
+        with self._connect() as conn:
+            cursor = conn.execute(
+                """
+                INSERT INTO cut_phases (name, start_date, end_date, target_weight_kg, target_calories, notes)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (name, start_date, end_date, target_weight_kg, target_calories, notes),
+            )
+            row = conn.execute("SELECT * FROM cut_phases WHERE id = ?", (cursor.lastrowid,)).fetchone()
+            return dict(row)
+
+    def update_cut_phase(self, phase_id: int, **kwargs: object) -> dict | None:
+        self._ensure_schema()
+        allowed = {"name", "start_date", "end_date", "target_weight_kg", "target_calories", "notes"}
+        fields = {k: v for k, v in kwargs.items() if k in allowed}
+        if not fields:
+            with self._connect() as conn:
+                row = conn.execute("SELECT * FROM cut_phases WHERE id = ?", (phase_id,)).fetchone()
+                return dict(row) if row else None
+        set_clause = ", ".join(f"{k} = ?" for k in fields)
+        with self._connect() as conn:
+            conn.execute(
+                f"UPDATE cut_phases SET {set_clause} WHERE id = ?",
+                (*fields.values(), phase_id),
+            )
+            row = conn.execute("SELECT * FROM cut_phases WHERE id = ?", (phase_id,)).fetchone()
+            return dict(row) if row else None
+
+    def _derive_week_number(self, log_date: str) -> int | None:
+        phase = self.get_active_cut_phase()
+        if not phase:
+            return None
+        start = _parse_date(phase["start_date"])
+        d = _parse_date(log_date)
+        if not start or not d:
+            return None
+        delta = (d - start).days
+        return max(1, delta // 7 + 1)
+
+    # ─── Daily logs ──────────────────────────────────────────────────────────
+
+    def get_daily_log(self, log_date: str) -> dict | None:
+        self._ensure_schema()
+        with self._connect() as conn:
+            row = conn.execute("SELECT * FROM daily_logs WHERE log_date = ?", (log_date,)).fetchone()
+            return dict(row) if row else None
+
+    def get_daily_logs(self, start: date | None, end: date | None) -> list[dict]:
+        self._ensure_schema()
+        _validate_range(start, end)
+        conditions: list[str] = []
+        params: list[object] = []
+        if start:
+            conditions.append("log_date >= ?")
+            params.append(start.isoformat())
+        if end:
+            conditions.append("log_date <= ?")
+            params.append(end.isoformat())
+        where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
+        with self._connect() as conn:
+            rows = conn.execute(f"SELECT * FROM daily_logs {where} ORDER BY log_date DESC", params).fetchall()
+            return [dict(r) for r in rows]
+
+    def upsert_daily_log(self, log_date: str, fields: dict) -> dict:
+        self._ensure_schema()
+        allowed = {
+            "cut_phase", "week_number", "training_type", "gym_done", "gym_minutes", "gym_rpe",
+            "gym_notes", "cardio_type", "cardio_minutes", "cardio_avg_hr", "vyvanse_taken",
+            "vyvanse_time", "dex_booster_taken", "dex_time", "sleep_hours", "sleep_quality",
+            "sleep_score", "am_energy", "pm_energy", "motivation", "hunger", "mood", "stress",
+            "soreness", "digestion", "rhr", "hrv_overnight", "water_litres", "notes",
+        }
+        clean = {k: v for k, v in fields.items() if k in allowed}
+
+        # Auto-derive cut_phase + week_number if not provided
+        if "cut_phase" not in clean or "week_number" not in clean:
+            phase = self.get_active_cut_phase()
+            if phase:
+                if "cut_phase" not in clean:
+                    clean["cut_phase"] = phase["name"]
+                if "week_number" not in clean:
+                    week = self._derive_week_number(log_date)
+                    if week is not None:
+                        clean["week_number"] = week
+
+        with self._connect() as conn:
+            existing = conn.execute("SELECT * FROM daily_logs WHERE log_date = ?", (log_date,)).fetchone()
+            if existing:
+                # Merge: only update provided fields
+                if clean:
+                    set_clause = ", ".join(f"{k} = ?" for k in clean) + ", updated_at = CURRENT_TIMESTAMP"
+                    conn.execute(
+                        f"UPDATE daily_logs SET {set_clause} WHERE log_date = ?",
+                        (*clean.values(), log_date),
+                    )
+            else:
+                cols = ["log_date"] + list(clean.keys())
+                placeholders = ", ".join("?" for _ in cols)
+                conn.execute(
+                    f"INSERT INTO daily_logs ({', '.join(cols)}) VALUES ({placeholders})",
+                    (log_date, *clean.values()),
+                )
+            row = conn.execute("SELECT * FROM daily_logs WHERE log_date = ?", (log_date,)).fetchone()
+            return dict(row)
+
+    # ─── Body measurements ───────────────────────────────────────────────────
+
+    def get_measurement(self, measure_date: str) -> dict | None:
+        self._ensure_schema()
+        with self._connect() as conn:
+            row = conn.execute("SELECT * FROM body_measurements WHERE measure_date = ?", (measure_date,)).fetchone()
+            return dict(row) if row else None
+
+    def get_measurements(self, start: date | None, end: date | None) -> list[dict]:
+        self._ensure_schema()
+        _validate_range(start, end)
+        conditions: list[str] = []
+        params: list[object] = []
+        if start:
+            conditions.append("measure_date >= ?")
+            params.append(start.isoformat())
+        if end:
+            conditions.append("measure_date <= ?")
+            params.append(end.isoformat())
+        where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
+        with self._connect() as conn:
+            rows = conn.execute(f"SELECT * FROM body_measurements {where} ORDER BY measure_date DESC", params).fetchall()
+            return [dict(r) for r in rows]
+
+    def upsert_measurement(self, measure_date: str, fields: dict) -> dict:
+        self._ensure_schema()
+        allowed = {"waist_cm", "chest_cm", "l_arm_cm", "r_arm_cm", "l_thigh_cm", "r_thigh_cm", "hip_cm"}
+        clean = {k: v for k, v in fields.items() if k in allowed}
+        with self._connect() as conn:
+            existing = conn.execute("SELECT * FROM body_measurements WHERE measure_date = ?", (measure_date,)).fetchone()
+            if existing:
+                if clean:
+                    set_clause = ", ".join(f"{k} = ?" for k in clean) + ", updated_at = CURRENT_TIMESTAMP"
+                    conn.execute(
+                        f"UPDATE body_measurements SET {set_clause} WHERE measure_date = ?",
+                        (*clean.values(), measure_date),
+                    )
+            else:
+                cols = ["measure_date"] + list(clean.keys())
+                placeholders = ", ".join("?" for _ in cols)
+                conn.execute(
+                    f"INSERT INTO body_measurements ({', '.join(cols)}) VALUES ({placeholders})",
+                    (measure_date, *clean.values()),
+                )
+            row = conn.execute("SELECT * FROM body_measurements WHERE measure_date = ?", (measure_date,)).fetchone()
+            return dict(row)
 
     def _insert_batch(self, conn: sqlite3.Connection, payload_hash: str, payload_json: str, headers: dict[str, str]) -> int:
         headers_json = _canonical_json(_safe_headers(headers))

@@ -1,5 +1,7 @@
 import { useMemo } from "react";
+import { Link } from "react-router-dom";
 import { useDashboardSummary, usePreferences } from "../hooks/use-dashboard";
+import { useCutPhases } from "../hooks/use-daily-log";
 import { CalorieRing } from "../components/charts/calorie-ring";
 import { MacroStack } from "../components/charts/macro-stack";
 import { Sparkline } from "../components/charts/sparkline";
@@ -69,6 +71,13 @@ export function Today() {
   const start = offsetDate(-89);
   const { data: summary, isLoading, error } = useDashboardSummary(start, end);
   const { data: prefs } = usePreferences();
+  const { data: cutData } = useCutPhases();
+  const TODAY = isoDate();
+  const activePhase = cutData?.phases.find((p) => !p.end_date || p.end_date >= TODAY) ?? null;
+  const cutBannerDay = activePhase
+    ? Math.floor((new Date().getTime() - new Date(activePhase.start_date).getTime()) / 86_400_000) + 1
+    : null;
+  const cutBannerWeek = cutBannerDay !== null ? Math.floor(cutBannerDay / 7) + 1 : null;
 
   const summaries = summary?.summaries ?? [];
   const today = summaries.find((d) => d.date === isoDate()) ?? summaries.at(-1) ?? null;
@@ -154,6 +163,26 @@ export function Today() {
           </div>
         )}
       </div>
+
+      {/* Cut phase banner */}
+      {activePhase && cutBannerWeek !== null && cutBannerDay !== null && (
+        <Link
+          to="/cut-phases"
+          className="flex items-center justify-between px-4 py-2.5 rounded-2xl bg-emerald-500/10 border border-emerald-700/50 hover:bg-emerald-500/15 transition-colors"
+        >
+          <div className="flex items-center gap-3">
+            <span className="text-sm font-semibold text-emerald-400">{activePhase.name}</span>
+            <span className="text-xs text-zinc-400">
+              Week {cutBannerWeek} · Day {cutBannerDay}
+            </span>
+          </div>
+          {activePhase.target_calories && (
+            <span className="text-xs text-zinc-500">
+              Target {activePhase.target_calories} kcal
+            </span>
+          )}
+        </Link>
+      )}
 
       {/* Hero — ring + macros */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">

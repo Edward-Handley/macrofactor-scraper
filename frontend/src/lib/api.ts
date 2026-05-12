@@ -1,4 +1,14 @@
 import type {
+  BodyMeasurement,
+  BodyMeasurementListResponse,
+  BodyMeasurementUpsert,
+  CoachDraftResponse,
+  CutPhase,
+  CutPhaseCreate,
+  CutPhaseListResponse,
+  DailyLog,
+  DailyLogListResponse,
+  DailyLogUpsert,
   DashboardSummaryResponse,
   DiagnosticsResponse,
   IngestStatus,
@@ -84,4 +94,57 @@ export const api = {
       `/v1/admin/repair?date=${date}&dry_run=${dryRun}`,
       { method: "POST" }
     ),
+
+  dailyLog: {
+    get: (date: string) => request<DailyLog>(`/v1/daily-log/${date}`),
+    list: (start?: string, end?: string) => {
+      const params = new URLSearchParams();
+      if (start) params.set("start", start);
+      if (end) params.set("end", end);
+      return request<DailyLogListResponse>(`/v1/daily-log?${params}`);
+    },
+    upsert: (date: string, data: DailyLogUpsert) =>
+      request<DailyLog>(`/v1/daily-log/${date}`, {
+        method: "PUT",
+        body: JSON.stringify(data),
+      }),
+  },
+
+  measurements: {
+    get: (date: string) => request<BodyMeasurement>(`/v1/measurements/${date}`),
+    list: (start?: string, end?: string) => {
+      const params = new URLSearchParams();
+      if (start) params.set("start", start);
+      if (end) params.set("end", end);
+      return request<BodyMeasurementListResponse>(`/v1/measurements?${params}`);
+    },
+    upsert: (date: string, data: BodyMeasurementUpsert) =>
+      request<BodyMeasurement>(`/v1/measurements/${date}`, {
+        method: "PUT",
+        body: JSON.stringify(data),
+      }),
+  },
+
+  cutPhases: {
+    list: () => request<CutPhaseListResponse>("/v1/cut-phases"),
+    create: (data: CutPhaseCreate) =>
+      request<CutPhase>("/v1/cut-phases", { method: "POST", body: JSON.stringify(data) }),
+    update: (id: number, data: Partial<CutPhaseCreate>) =>
+      request<CutPhase>(`/v1/cut-phases/${id}`, { method: "PUT", body: JSON.stringify(data) }),
+  },
+
+  garmin: {
+    status: () => request<{ configured: boolean; last_sync_at: string | null; last_error: string | null }>("/v1/garmin/status"),
+    values: (date: string) => request<Record<string, number>>(`/v1/garmin/values/${date}`),
+    sync: (date?: string) =>
+      request<{ synced: boolean; changed: Record<string, boolean> }>(
+        `/v1/garmin/sync${date ? `?sync_date=${date}` : ""}`,
+        { method: "POST" }
+      ),
+  },
+
+  coach: {
+    draft: (date?: string) =>
+      request<CoachDraftResponse>(`/v1/coach/draft${date ? `?for_date=${date}` : ""}`),
+  },
 };

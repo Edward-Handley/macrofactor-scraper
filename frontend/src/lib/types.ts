@@ -428,3 +428,103 @@ export const FIELD_META: Record<SummaryField, FieldMeta> = {
 };
 
 export const ALL_FIELDS: SummaryField[] = ["calories", "protein", "carbohydrates", "fat", "water", "weight", "steps", "active_energy"];
+
+// ─── Daily log ────────────────────────────────────────────────────────────────
+
+export interface DailyLog {
+  log_date: string;
+  cut_phase: string | null;
+  week_number: number | null;
+  training_type: string | null;
+  gym_done: boolean | null;
+  gym_minutes: number | null;
+  gym_rpe: number | null;
+  gym_notes: string | null;
+  cardio_type: string | null;
+  cardio_minutes: number | null;
+  cardio_avg_hr: number | null;
+  vyvanse_taken: boolean | null;
+  vyvanse_time: string | null;
+  dex_booster_taken: boolean | null;
+  dex_time: string | null;
+  sleep_hours: number | null;
+  sleep_quality: number | null;
+  sleep_score: number | null;
+  am_energy: number | null;
+  pm_energy: number | null;
+  motivation: number | null;
+  hunger: number | null;
+  mood: number | null;
+  stress: number | null;
+  soreness: number | null;
+  digestion: number | null;
+  rhr: number | null;
+  hrv_overnight: number | null;
+  water_litres: number | null;
+  notes: string | null;
+  created_at: string | null;
+  updated_at: string | null;
+}
+
+export type DailyLogUpsert = Partial<Omit<DailyLog, "log_date" | "created_at" | "updated_at">>;
+
+export interface DailyLogListResponse {
+  count: number;
+  logs: DailyLog[];
+}
+
+// ─── Body measurements ────────────────────────────────────────────────────────
+
+export interface BodyMeasurement {
+  measure_date: string;
+  waist_cm: number | null;
+  chest_cm: number | null;
+  l_arm_cm: number | null;
+  r_arm_cm: number | null;
+  l_thigh_cm: number | null;
+  r_thigh_cm: number | null;
+  hip_cm: number | null;
+  created_at: string | null;
+  updated_at: string | null;
+}
+
+export type BodyMeasurementUpsert = Partial<Omit<BodyMeasurement, "measure_date" | "created_at" | "updated_at">>;
+
+export interface BodyMeasurementListResponse {
+  count: number;
+  measurements: BodyMeasurement[];
+}
+
+// ─── Cut phases ───────────────────────────────────────────────────────────────
+
+export interface CutPhase {
+  id: number;
+  name: string;
+  start_date: string;
+  end_date: string | null;
+  target_weight_kg: number | null;
+  target_calories: number | null;
+  notes: string | null;
+  created_at: string | null;
+}
+
+export interface CutPhaseCreate {
+  name: string;
+  start_date: string;
+  end_date?: string | null;
+  target_weight_kg?: number | null;
+  target_calories?: number | null;
+  notes?: string | null;
+}
+
+export interface CutPhaseListResponse {
+  count: number;
+  phases: CutPhase[];
+}
+
+// ─── Coach draft ──────────────────────────────────────────────────────────────
+
+export interface CoachDraftResponse {
+  date: string;
+  prompt_text: string;
+}

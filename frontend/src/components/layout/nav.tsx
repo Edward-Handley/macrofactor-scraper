@@ -1,8 +1,11 @@
 import { NavLink } from "react-router-dom";
-import { Activity, BarChart2, Database, Dumbbell, Search, Settings } from "lucide-react";
+import { Activity, BarChart2, BotMessageSquare, Database, Dumbbell, Moon, Search, Settings, Sun, Scissors } from "lucide-react";
 import { cn } from "../../lib/utils";
 
-const NAV_ITEMS = [
+// Morning = before 14:00, Evening = 14:00+
+const isEvening = () => new Date().getHours() >= 14;
+
+const STATIC_NAV_ITEMS = [
   { to: "/",            label: "Today",    Icon: Activity  },
   { to: "/trends",      label: "Trends",   Icon: BarChart2 },
   { to: "/workouts",    label: "Workouts", Icon: Dumbbell  },
@@ -11,11 +14,11 @@ const NAV_ITEMS = [
   { to: "/settings",    label: "Settings", Icon: Settings  },
 ];
 
-function NavItem({ to, label, Icon }: typeof NAV_ITEMS[0]) {
+function NavItem({ to, label, Icon, end = false }: { to: string; label: string; Icon: React.ElementType; end?: boolean }) {
   return (
     <NavLink
       to={to}
-      end={to === "/"}
+      end={end}
       className={({ isActive }) =>
         cn(
           "flex flex-col items-center gap-1 px-3 py-2 rounded-xl text-xs font-medium transition-colors",
@@ -31,12 +34,41 @@ function NavItem({ to, label, Icon }: typeof NAV_ITEMS[0]) {
   );
 }
 
+function LogNavItem() {
+  const evening = isEvening();
+  const to = evening ? "/evening" : "/morning";
+  const label = evening ? "Evening" : "Morning";
+  const Icon = evening ? Moon : Sun;
+  const activeColor = evening ? "text-indigo-400 bg-indigo-500/10" : "text-amber-400 bg-amber-500/10";
+
+  return (
+    <NavLink
+      to={to}
+      className={({ isActive }) =>
+        cn(
+          "flex flex-col items-center gap-1 px-3 py-2 rounded-xl text-xs font-medium transition-colors",
+          isActive ? activeColor : "text-zinc-500 hover:text-zinc-200 hover:bg-zinc-800"
+        )
+      }
+    >
+      <Icon size={20} strokeWidth={1.75} />
+      <span className="hidden md:block">{label}</span>
+    </NavLink>
+  );
+}
+
 export function SidebarNav() {
   return (
     <nav className="flex flex-col gap-1 p-3">
-      {NAV_ITEMS.map((item) => (
-        <NavItem key={item.to} {...item} />
-      ))}
+      <NavItem to="/" label="Today" Icon={Activity} end />
+      <LogNavItem />
+      <NavItem to="/coach" label="Coach" Icon={BotMessageSquare} />
+      <NavItem to="/cut-phases" label="Cut" Icon={Scissors} />
+      <NavItem to="/trends" label="Trends" Icon={BarChart2} />
+      <NavItem to="/workouts" label="Workouts" Icon={Dumbbell} />
+      <NavItem to="/data-health" label="Data" Icon={Database} />
+      <NavItem to="/explorer" label="Explore" Icon={Search} />
+      <NavItem to="/settings" label="Settings" Icon={Settings} />
     </nav>
   );
 }
@@ -44,9 +76,14 @@ export function SidebarNav() {
 export function BottomNav() {
   return (
     <nav className="flex items-center justify-around px-2 py-1 border-t border-zinc-800 bg-zinc-950/95 backdrop-blur">
-      {NAV_ITEMS.map((item) => (
-        <NavItem key={item.to} {...item} />
-      ))}
+      <NavItem to="/" label="Today" Icon={Activity} end />
+      <LogNavItem />
+      <NavItem to="/coach" label="Coach" Icon={BotMessageSquare} />
+      <NavItem to="/cut-phases" label="Cut" Icon={Scissors} />
+      <NavItem to="/trends" label="Trends" Icon={BarChart2} />
+      <NavItem to="/workouts" label="Workouts" Icon={Dumbbell} />
+      <NavItem to="/data-health" label="Data" Icon={Database} />
+      <NavItem to="/settings" label="Settings" Icon={Settings} />
     </nav>
   );
 }

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 import csv
 import hmac
@@ -21,6 +22,17 @@ from fastapi.staticfiles import StaticFiles
 from macrofactor_scraper.config import Settings, get_settings
 from macrofactor_scraper.health_export import HealthAutoExportService
 from macrofactor_scraper.models import (
+    BodyMeasurement,
+    BodyMeasurementListResponse,
+    BodyMeasurementUpsert,
+    CoachDraftResponse,
+    CutPhase,
+    CutPhaseCreate,
+    CutPhaseListResponse,
+    CutPhaseUpdate,
+    DailyLog,
+    DailyLogListResponse,
+    DailyLogUpsert,
     DailySummaryResponse,
     DashboardMetricCatalogResponse,
     DashboardPreferences,
@@ -40,6 +52,9 @@ from macrofactor_scraper.models import (
     StrongSessionRecord,
     StrongSummaryResponse,
     WorkoutListResponse,
+    _row_to_cut_phase,
+    _row_to_daily_log,
+    _row_to_measurement,
 )
 
 
@@ -61,7 +76,24 @@ _LOGIN_LOCKOUTS: dict[str, float] = {}
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    # Start Garmin background sync if credentials configured
+    _garmin_task = None
+    settings = get_settings()
+    if settings.has_garmin_credentials:
+        from macrofactor_scraper.garmin import GarminSyncService, garmin_sync_loop
+        garmin = GarminSyncService(
+            username=settings.garmin_username,  # type: ignore[arg-type]
+            password=settings.garmin_password,  # type: ignore[arg-type]
+            mfa_secret=settings.garmin_mfa_secret,
+            tokenstore=settings.garmin_tokenstore,
+        )
+        app.state.garmin_service = garmin
+        _garmin_task = asyncio.create_task(
+            garmin_sync_loop(app, interval_hours=settings.garmin_sync_interval_hours)
+        )
     yield
+    if _garmin_task is not None:
+        _garmin_task.cancel()
     service = getattr(app.state, "health_export_service", None)
     if service is not None:
         service.close()
@@ -574,6 +606,177 @@ def _record_login_failure(client_key: str, now: float) -> None:
 def _clear_login_failures(client_key: str) -> None:
     _LOGIN_FAILURES.pop(client_key, None)
     _LOGIN_LOCKOUTS.pop(client_key, None)
+
+
+@app.get("/v1/garmin/status", dependencies=[Depends(require_private_access)])
+async def garmin_status() -> dict:
+    garmin = getattr(app.state, "garmin_service", None)
+    if garmin is None:
+        return {"configured": False, "last_sync_at": None, "last_error": None}
+    return {
+        "configured": True,
+        "last_sync_at": garmin.last_sync_at.isoformat() if garmin.last_sync_at else None,
+        "last_error": garmin.last_error,
+    }
+
+
+@app.post("/v1/garmin/sync")
+async def garmin_manual_sync(
+    sync_date: date | None = None,
+    x_api_key: str | None = Header(default=None),
+    settings: Settings = Depends(get_settings),
+    service: HealthAutoExportService = Depends(get_health_export_service),
+) -> dict:
+    if not _valid_api_key(x_api_key, settings):
+        raise HTTPException(status_code=401, detail="Ingest API key required")
+    garmin = getattr(app.state, "garmin_service", None)
+    if garmin is None:
+        raise HTTPException(status_code=503, detail="Garmin not configured — set GARMIN_USERNAME and GARMIN_PASSWORD")
+    from macrofactor_scraper.garmin import _SYNC_LOCK
+    async with _SYNC_LOCK:
+        if sync_date:
+            changed = await asyncio.get_event_loop().run_in_executor(
+                None, garmin.sync_date, sync_date, service
+            )
+        else:
+            changed = await asyncio.get_event_loop().run_in_executor(
+                None, garmin.sync_recent, service
+            )
+    return {"synced": True, "changed": changed if isinstance(changed, dict) else {}}
+
+
+@app.get("/v1/garmin/values/{for_date}", dependencies=[Depends(require_private_access)])
+async def garmin_values(
+    for_date: date,
+    service: HealthAutoExportService = Depends(get_health_export_service),
+) -> dict:
+    """Return Garmin-sourced metric values for a date (for evening form autofill)."""
+    with service._connect() as conn:
+        rows = conn.execute(
+            "SELECT metric_name, quantity FROM health_records WHERE record_date = ? AND source = 'Garmin'",
+            (for_date.isoformat(),),
+        ).fetchall()
+    return {row["metric_name"]: float(row["quantity"]) for row in rows}
+
+
+@app.get("/v1/cut-phases", response_model=CutPhaseListResponse, dependencies=[Depends(require_private_access)])
+async def list_cut_phases(service: HealthAutoExportService = Depends(get_health_export_service)) -> CutPhaseListResponse:
+    phases = service.get_cut_phases()
+    return CutPhaseListResponse(count=len(phases), phases=[_row_to_cut_phase(p) for p in phases])
+
+
+@app.post("/v1/cut-phases", response_model=CutPhase, dependencies=[Depends(require_private_access)])
+async def create_cut_phase(
+    body: CutPhaseCreate,
+    service: HealthAutoExportService = Depends(get_health_export_service),
+) -> CutPhase:
+    row = service.create_cut_phase(
+        name=body.name,
+        start_date=body.start_date.isoformat(),
+        end_date=body.end_date.isoformat() if body.end_date else None,
+        target_weight_kg=body.target_weight_kg,
+        target_calories=body.target_calories,
+        notes=body.notes,
+    )
+    return _row_to_cut_phase(row)
+
+
+@app.put("/v1/cut-phases/{phase_id}", response_model=CutPhase, dependencies=[Depends(require_private_access)])
+async def update_cut_phase(
+    phase_id: int,
+    body: CutPhaseUpdate,
+    service: HealthAutoExportService = Depends(get_health_export_service),
+) -> CutPhase:
+    fields = body.model_dump(exclude_unset=True)
+    if "start_date" in fields and fields["start_date"] is not None:
+        fields["start_date"] = fields["start_date"].isoformat()
+    if "end_date" in fields and fields["end_date"] is not None:
+        fields["end_date"] = fields["end_date"].isoformat()
+    row = service.update_cut_phase(phase_id, **fields)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Cut phase not found")
+    return _row_to_cut_phase(row)
+
+
+@app.get("/v1/daily-log", response_model=DailyLogListResponse, dependencies=[Depends(require_private_access)])
+async def list_daily_logs(
+    start: date | None = None,
+    end: date | None = None,
+    service: HealthAutoExportService = Depends(get_health_export_service),
+) -> DailyLogListResponse:
+    try:
+        rows = service.get_daily_logs(start, end)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return DailyLogListResponse(count=len(rows), logs=[_row_to_daily_log(r) for r in rows])
+
+
+@app.get("/v1/daily-log/{log_date}", response_model=DailyLog, dependencies=[Depends(require_private_access)])
+async def get_daily_log(log_date: date, service: HealthAutoExportService = Depends(get_health_export_service)) -> DailyLog:
+    row = service.get_daily_log(log_date.isoformat())
+    if row is None:
+        raise HTTPException(status_code=404, detail="No log entry for this date")
+    return _row_to_daily_log(row)
+
+
+@app.put("/v1/daily-log/{log_date}", response_model=DailyLog, dependencies=[Depends(require_private_access)])
+async def upsert_daily_log(
+    log_date: date,
+    body: DailyLogUpsert,
+    service: HealthAutoExportService = Depends(get_health_export_service),
+) -> DailyLog:
+    fields = body.model_dump(exclude_unset=True)
+    # Convert booleans to ints for SQLite
+    for bool_field in ("gym_done", "vyvanse_taken", "dex_booster_taken"):
+        if bool_field in fields and fields[bool_field] is not None:
+            fields[bool_field] = int(fields[bool_field])
+    row = service.upsert_daily_log(log_date.isoformat(), fields)
+    return _row_to_daily_log(row)
+
+
+@app.get("/v1/measurements", response_model=BodyMeasurementListResponse, dependencies=[Depends(require_private_access)])
+async def list_measurements(
+    start: date | None = None,
+    end: date | None = None,
+    service: HealthAutoExportService = Depends(get_health_export_service),
+) -> BodyMeasurementListResponse:
+    try:
+        rows = service.get_measurements(start, end)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return BodyMeasurementListResponse(count=len(rows), measurements=[_row_to_measurement(r) for r in rows])
+
+
+@app.get("/v1/measurements/{measure_date}", response_model=BodyMeasurement, dependencies=[Depends(require_private_access)])
+async def get_measurement(measure_date: date, service: HealthAutoExportService = Depends(get_health_export_service)) -> BodyMeasurement:
+    row = service.get_measurement(measure_date.isoformat())
+    if row is None:
+        raise HTTPException(status_code=404, detail="No measurement entry for this date")
+    return _row_to_measurement(row)
+
+
+@app.put("/v1/measurements/{measure_date}", response_model=BodyMeasurement, dependencies=[Depends(require_private_access)])
+async def upsert_measurement(
+    measure_date: date,
+    body: BodyMeasurementUpsert,
+    service: HealthAutoExportService = Depends(get_health_export_service),
+) -> BodyMeasurement:
+    fields = body.model_dump(exclude_unset=True)
+    row = service.upsert_measurement(measure_date.isoformat(), fields)
+    return _row_to_measurement(row)
+
+
+@app.get("/v1/coach/draft", response_model=CoachDraftResponse, dependencies=[Depends(require_private_access)])
+async def coach_draft(
+    for_date: date | None = None,
+    service: HealthAutoExportService = Depends(get_health_export_service),
+) -> CoachDraftResponse:
+    from macrofactor_scraper.coach import build_coach_data, build_prompt
+    import datetime as _dt
+    target = for_date or _dt.date.today()
+    coach_data = build_coach_data(service, target)
+    prompt_text = build_prompt(coach_data)
+    return CoachDraftResponse(date=target.isoformat(), prompt_text=prompt_text)
 
 
 @app.get("/{full_path:path}")

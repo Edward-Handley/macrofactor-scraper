@@ -495,3 +495,215 @@ class RepairReport(BaseModel):
     rows_removed: int
     backup_path: str | None = None
     deltas: list[RepairDayDelta]
+
+
+# ─── Cut phases ───────────────────────────────────────────────────────────────
+
+class CutPhase(BaseModel):
+    id: int
+    name: str
+    start_date: dt.date
+    end_date: dt.date | None = None
+    target_weight_kg: float | None = None
+    target_calories: int | None = None
+    notes: str | None = None
+    created_at: dt.datetime | None = None
+
+
+class CutPhaseCreate(BaseModel):
+    name: str
+    start_date: dt.date
+    end_date: dt.date | None = None
+    target_weight_kg: float | None = None
+    target_calories: int | None = None
+    notes: str | None = None
+
+
+class CutPhaseUpdate(BaseModel):
+    name: str | None = None
+    start_date: dt.date | None = None
+    end_date: dt.date | None = None
+    target_weight_kg: float | None = None
+    target_calories: int | None = None
+    notes: str | None = None
+
+
+class CutPhaseListResponse(BaseModel):
+    count: int
+    phases: list[CutPhase]
+
+
+# ─── Daily log ────────────────────────────────────────────────────────────────
+
+class DailyLog(BaseModel):
+    log_date: dt.date
+    cut_phase: str | None = None
+    week_number: int | None = None
+    training_type: str | None = None
+    gym_done: bool | None = None
+    gym_minutes: int | None = None
+    gym_rpe: float | None = None
+    gym_notes: str | None = None
+    cardio_type: str | None = None
+    cardio_minutes: int | None = None
+    cardio_avg_hr: int | None = None
+    vyvanse_taken: bool | None = None
+    vyvanse_time: str | None = None
+    dex_booster_taken: bool | None = None
+    dex_time: str | None = None
+    sleep_hours: float | None = None
+    sleep_quality: int | None = None
+    sleep_score: int | None = None
+    am_energy: int | None = None
+    pm_energy: int | None = None
+    motivation: int | None = None
+    hunger: int | None = None
+    mood: int | None = None
+    stress: int | None = None
+    soreness: int | None = None
+    digestion: int | None = None
+    rhr: int | None = None
+    hrv_overnight: int | None = None
+    water_litres: float | None = None
+    notes: str | None = None
+    created_at: dt.datetime | None = None
+    updated_at: dt.datetime | None = None
+
+
+class DailyLogUpsert(BaseModel):
+    cut_phase: str | None = None
+    week_number: int | None = None
+    training_type: str | None = None
+    gym_done: bool | None = None
+    gym_minutes: int | None = None
+    gym_rpe: float | None = None
+    gym_notes: str | None = None
+    cardio_type: str | None = None
+    cardio_minutes: int | None = None
+    cardio_avg_hr: int | None = None
+    vyvanse_taken: bool | None = None
+    vyvanse_time: str | None = None
+    dex_booster_taken: bool | None = None
+    dex_time: str | None = None
+    sleep_hours: float | None = None
+    sleep_quality: int | None = None
+    sleep_score: int | None = None
+    am_energy: int | None = None
+    pm_energy: int | None = None
+    motivation: int | None = None
+    hunger: int | None = None
+    mood: int | None = None
+    stress: int | None = None
+    soreness: int | None = None
+    digestion: int | None = None
+    rhr: int | None = None
+    hrv_overnight: int | None = None
+    water_litres: float | None = None
+    notes: str | None = None
+
+
+class DailyLogListResponse(BaseModel):
+    count: int
+    logs: list[DailyLog]
+
+
+# ─── Body measurements ────────────────────────────────────────────────────────
+
+class BodyMeasurement(BaseModel):
+    measure_date: dt.date
+    waist_cm: float | None = None
+    chest_cm: float | None = None
+    l_arm_cm: float | None = None
+    r_arm_cm: float | None = None
+    l_thigh_cm: float | None = None
+    r_thigh_cm: float | None = None
+    hip_cm: float | None = None
+    created_at: dt.datetime | None = None
+    updated_at: dt.datetime | None = None
+
+
+class BodyMeasurementUpsert(BaseModel):
+    waist_cm: float | None = None
+    chest_cm: float | None = None
+    l_arm_cm: float | None = None
+    r_arm_cm: float | None = None
+    l_thigh_cm: float | None = None
+    r_thigh_cm: float | None = None
+    hip_cm: float | None = None
+
+
+class BodyMeasurementListResponse(BaseModel):
+    count: int
+    measurements: list[BodyMeasurement]
+
+
+def _row_to_daily_log(row: dict) -> DailyLog:
+    return DailyLog(
+        log_date=row["log_date"],
+        cut_phase=row.get("cut_phase"),
+        week_number=row.get("week_number"),
+        training_type=row.get("training_type"),
+        gym_done=bool(row["gym_done"]) if row.get("gym_done") is not None else None,
+        gym_minutes=row.get("gym_minutes"),
+        gym_rpe=row.get("gym_rpe"),
+        gym_notes=row.get("gym_notes"),
+        cardio_type=row.get("cardio_type"),
+        cardio_minutes=row.get("cardio_minutes"),
+        cardio_avg_hr=row.get("cardio_avg_hr"),
+        vyvanse_taken=bool(row["vyvanse_taken"]) if row.get("vyvanse_taken") is not None else None,
+        vyvanse_time=row.get("vyvanse_time"),
+        dex_booster_taken=bool(row["dex_booster_taken"]) if row.get("dex_booster_taken") is not None else None,
+        dex_time=row.get("dex_time"),
+        sleep_hours=row.get("sleep_hours"),
+        sleep_quality=row.get("sleep_quality"),
+        sleep_score=row.get("sleep_score"),
+        am_energy=row.get("am_energy"),
+        pm_energy=row.get("pm_energy"),
+        motivation=row.get("motivation"),
+        hunger=row.get("hunger"),
+        mood=row.get("mood"),
+        stress=row.get("stress"),
+        soreness=row.get("soreness"),
+        digestion=row.get("digestion"),
+        rhr=row.get("rhr"),
+        hrv_overnight=row.get("hrv_overnight"),
+        water_litres=row.get("water_litres"),
+        notes=row.get("notes"),
+        created_at=row.get("created_at"),
+        updated_at=row.get("updated_at"),
+    )
+
+
+def _row_to_measurement(row: dict) -> BodyMeasurement:
+    return BodyMeasurement(
+        measure_date=row["measure_date"],
+        waist_cm=row.get("waist_cm"),
+        chest_cm=row.get("chest_cm"),
+        l_arm_cm=row.get("l_arm_cm"),
+        r_arm_cm=row.get("r_arm_cm"),
+        l_thigh_cm=row.get("l_thigh_cm"),
+        r_thigh_cm=row.get("r_thigh_cm"),
+        hip_cm=row.get("hip_cm"),
+        created_at=row.get("created_at"),
+        updated_at=row.get("updated_at"),
+    )
+
+
+def _row_to_cut_phase(row: dict) -> CutPhase:
+    return CutPhase(
+        id=row["id"],
+        name=row["name"],
+        start_date=row["start_date"],
+        end_date=row.get("end_date"),
+        target_weight_kg=row.get("target_weight_kg"),
+        target_calories=row.get("target_calories"),
+        notes=row.get("notes"),
+        created_at=row.get("created_at"),
+    )
+
+
+# ─── Coach draft ──────────────────────────────────────────────────────────────
+
+class CoachDraftResponse(BaseModel):
+    date: str
+    prompt_text: str

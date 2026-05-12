@@ -81,6 +81,31 @@ class Settings(BaseSettings):
         }
     )
 
+    garmin_username: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("GARMIN_USERNAME", "MACROFACTOR_GARMIN_USERNAME"),
+    )
+    garmin_password: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("GARMIN_PASSWORD", "MACROFACTOR_GARMIN_PASSWORD"),
+    )
+    garmin_mfa_secret: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("GARMIN_MFA_SECRET", "MACROFACTOR_GARMIN_MFA_SECRET"),
+    )
+    garmin_tokenstore: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("GARMIN_TOKENSTORE", "MACROFACTOR_GARMIN_TOKENSTORE"),
+    )
+    garmin_sync_interval_hours: int = Field(
+        default=6,
+        validation_alias=AliasChoices("GARMIN_SYNC_INTERVAL_HOURS", "MACROFACTOR_GARMIN_SYNC_INTERVAL_HOURS"),
+    )
+
+    @property
+    def has_garmin_credentials(self) -> bool:
+        return bool(self.garmin_username and self.garmin_password)
+
     @property
     def has_credentials(self) -> bool:
         return bool(self.username and self.password and self.firebase_api_key)

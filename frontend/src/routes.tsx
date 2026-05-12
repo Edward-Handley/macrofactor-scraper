@@ -6,6 +6,10 @@ import { Workouts } from "./pages/workouts";
 import { DataHealth } from "./pages/data-health";
 import { Explorer } from "./pages/explorer";
 import { Settings } from "./pages/settings";
+import { Morning } from "./pages/morning";
+import { Evening } from "./pages/evening";
+import { CutPhases } from "./pages/cut-phases";
+import { Coach } from "./pages/coach";
 
 export const router = createBrowserRouter([
   {
@@ -18,6 +22,10 @@ export const router = createBrowserRouter([
       { path: "data-health", element: <DataHealth /> },
       { path: "explorer", element: <Explorer /> },
       { path: "settings", element: <Settings /> },
+      { path: "morning", element: <Morning /> },
+      { path: "evening", element: <Evening /> },
+      { path: "cut-phases", element: <CutPhases /> },
+      { path: "coach", element: <Coach /> },
     ],
   },
 ]);
