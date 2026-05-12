@@ -675,6 +675,43 @@ async def garmin_values(
     return {row["metric_name"]: float(row["quantity"]) for row in rows}
 
 
+@app.get("/v1/garmin/categories", dependencies=[Depends(require_private_access)])
+async def garmin_categories() -> dict:
+    """Return metric categories + units for the Health tab."""
+    from macrofactor_scraper.garmin import GARMIN_METRIC_CATEGORIES, GARMIN_METRIC_UNITS
+    return {"categories": GARMIN_METRIC_CATEGORIES, "units": GARMIN_METRIC_UNITS}
+
+
+@app.get("/v1/garmin/series/{metric_name}", dependencies=[Depends(require_private_access)])
+async def garmin_series(
+    metric_name: str,
+    days: int = 30,
+    service: HealthAutoExportService = Depends(get_health_export_service),
+) -> dict:
+    """Return a time series of a single Garmin metric over the last N days."""
+    from macrofactor_scraper.garmin import ALL_GARMIN_METRICS, GARMIN_METRIC_UNITS
+    if metric_name not in ALL_GARMIN_METRICS:
+        raise HTTPException(status_code=404, detail=f"Unknown Garmin metric: {metric_name!r}")
+    if not (1 <= days <= 365):
+        raise HTTPException(status_code=400, detail="days must be 1–365")
+    with service._connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT record_date, quantity FROM health_records
+            WHERE source = 'Garmin' AND metric_name = ?
+              AND record_date >= date('now', ? || ' days')
+            ORDER BY record_date ASC
+            """,
+            (metric_name, f"-{days}"),
+        ).fetchall()
+    units = GARMIN_METRIC_UNITS.get(metric_name, "")
+    return {
+        "metric": metric_name,
+        "units": units,
+        "points": [{"date": row["record_date"], "value": float(row["quantity"])} for row in rows],
+    }
+
+
 @app.get("/v1/cut-phases", response_model=CutPhaseListResponse, dependencies=[Depends(require_private_access)])
 async def list_cut_phases(service: HealthAutoExportService = Depends(get_health_export_service)) -> CutPhaseListResponse:
     phases = service.get_cut_phases()

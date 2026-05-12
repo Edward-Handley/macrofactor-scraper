@@ -143,3 +143,20 @@ export function useRepair() {
     },
   });
 }
+
+export function useGarminCategories() {
+  return useQuery({
+    queryKey: ["garmin-categories"],
+    queryFn: api.garmin.categories,
+    staleTime: Infinity,
+  });
+}
+
+export function useGarminSeries(metric: string, days = 30) {
+  return useQuery({
+    queryKey: ["garmin-series", metric, days],
+    queryFn: () => api.garmin.series(metric, days),
+    staleTime: 300_000,
+    enabled: !!metric,
+  });
+}

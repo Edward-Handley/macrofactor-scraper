@@ -25,7 +25,7 @@ There are no calorie/macro targets in the dashboard — it shows absolute consum
 | Backend | Python 3.12 + FastAPI + SQLite (no ORM) |
 | Frontend | React 18 + Vite + TypeScript + Tailwind CSS v4 + React Query v5 + React Router v6 + Recharts |
 | Deploy | Docker Compose + Caddy reverse proxy |
-| Tests | pytest (34 tests, all passing) |
+| Tests | pytest (84 tests, all passing) |
 
 ---
 
@@ -36,6 +36,7 @@ macrofactor-scraper/
 ├── src/macrofactor_scraper/
 │   ├── api.py              ← FastAPI app, all endpoints
 │   ├── health_export.py    ← Core service: ingest, aggregation, diagnostics, repair
+│   ├── garmin.py           ← Garmin Connect sync: extractors, GarminSyncService, background loop
 │   ├── models.py           ← Pydantic models for all responses
 │   ├── config.py           ← Settings (reads .env)
 │   ├── repair.py           ← CLI for retroactive cleanup of stacked rows
@@ -45,7 +46,7 @@ macrofactor-scraper/
 ├── frontend/
 │   ├── src/
 │   │   ├── main.tsx        ← Entrypoint: QueryClientProvider + RouterProvider
-│   │   ├── routes.tsx      ← createBrowserRouter with 5 routes
+│   │   ├── routes.tsx      ← createBrowserRouter with all routes
 │   │   ├── index.css       ← Tailwind v4 + CSS color tokens
 │   │   ├── lib/
 │   │   │   ├── api.ts      ← Typed fetch client for all /v1 endpoints
@@ -62,6 +63,7 @@ macrofactor-scraper/
 │   │   │                       trend-chart.tsx, calendar-heatmap.tsx
 │   │   └── pages/
 │   │       ├── today.tsx       ← Hero page with ring, macros, stats, heatmap
+│   │       ├── health.tsx      ← Garmin health tab: all metrics, sparklines, sync button
 │   │       ├── trends.tsx      ← Time-series charts with field toggles
 │   │       ├── data-health.tsx ← Suspicious days + repair + metric catalog
 │   │       ├── explorer.tsx    ← API data explorer (see details below)
@@ -69,7 +71,9 @@ macrofactor-scraper/
 │   ├── package.json
 │   ├── vite.config.ts      ← Proxies /v1 → localhost:8000, builds to static/dashboard
 │   └── tsconfig.json       ← target ES2022
-└── tests/test_api.py       ← 34 pytest tests (all pass)
+├── tests/
+│   ├── test_api.py         ← Integration tests
+│   └── test_garmin.py      ← Garmin extractor unit tests
 ```
 
 ---
@@ -79,6 +83,7 @@ macrofactor-scraper/
 | Path | Page | What it shows |
 |------|------|---------------|
 | `/` | Today | Calorie ring, macro bars, calorie split %, yesterday delta, rolling averages, heatmap, 14-day table with 7d avg footer |
+| `/health` | Health | All Garmin metrics (recovery / wellness / training / activity), date picker, sync button, 30-day sparklines per metric |
 | `/trends` | Trends | Field toggles, range presets, per-field stats (avg/min/max/slope), optional 7d MA overlay, CSV export |
 | `/data-health` | Data Health | Suspicious days (>5000 kcal), inline diagnostics, one-click repair, metric catalog with trust toggles |
 | `/explorer` | Explorer | Dataset picker, sort/filter/paginate (50/page), column visibility, per-column stats, CSV export |
@@ -107,6 +112,15 @@ GET  /v1/export/metrics/{metric_name}.csv
 GET  /v1/excel/daily-log.csv
 GET  /v1/excel/calories-weight.csv
 GET  /v1/excel/metrics/{metric_name}.csv
+
+# Garmin (all require auth)
+GET  /v1/garmin/status
+POST /v1/garmin/sync?sync_date=YYYY-MM-DD       ← ingest key
+GET  /v1/garmin/values/{YYYY-MM-DD}
+GET  /v1/garmin/categories
+GET  /v1/garmin/series/{metric_name}?days=30
+GET  /v1/garmin/debug/{YYYY-MM-DD}              ← ingest key, troubleshooting only
+
 GET  /{any-other-path}                          ← SPA catch-all → dashboard.html
 ```
 
@@ -172,6 +186,8 @@ Defined in `frontend/src/index.css` as CSS custom properties (`--color-calories`
 | `useIngestStatus()` | `["ingest-status"]` |
 | `useDiagnostics(date)` | `["diagnostics", date]` |
 | `useRepair()` mutation | invalidates dashboard-summary + diagnostics |
+| `useGarminCategories()` | `["garmin-categories"]` — staleTime Infinity |
+| `useGarminSeries(metric, days)` | `["garmin-series", metric, days]` |
 
 ### TrendChart
 
@@ -237,13 +253,44 @@ docker compose exec api python -m macrofactor_scraper.repair --apply
 
 ---
 
+## Garmin integration
+
+`garmin.py` syncs daily Garmin Connect data into the shared `health_records` table (`source = 'Garmin'`). Background loop runs every 6 hours via `garmin_sync_loop`.
+
+### Metrics pulled per sync
+
+| Category | Metric names stored |
+|----------|---------------------|
+| Recovery | `sleep_minutes`, `sleep_score`, `resting_heart_rate`, `hrv_overnight` |
+| Wellness | `body_battery_high`, `body_battery_low`, `body_battery_charged`, `body_battery_drained`, `stress_avg`, `stress_max`, `respiration_avg`, `spo2_avg`, `spo2_lowest` |
+| Training | `training_readiness_score`, `vo2_max_running`, `vo2_max_cycling`, `intensity_minutes_moderate`, `intensity_minutes_vigorous` |
+| Activity | `garmin_steps`, `floors_ascended`, `active_calories`, `total_distance_m` |
+
+`GARMIN_METRIC_CATEGORIES`, `GARMIN_METRIC_UNITS`, `ALL_GARMIN_METRICS` constants in `garmin.py` drive both the API (`/v1/garmin/categories`) and validation (series endpoint whitelist).
+
+### Storage
+
+`upsert_garmin_metric(metric_name, units, record_date, quantity)` in `health_export.py:1500`. Writes to same `health_records` table as Auto Health Export. Fingerprint: `_fingerprint("garmin_v1", metric_name, record_date, "Garmin")`. Update-on-change (threshold 0.001).
+
+### Troubleshoot missing values
+
+```bash
+curl -H "X-API-Key: $HEALTH_EXPORT_API_KEY" \
+  "https://health.ar333lot.lol/v1/garmin/debug/2026-05-12"
+```
+
+Look at `extracted.*` and `payloads.*.numeric_matches`. If a value appears at an unexpected path, add it to the relevant `_extract_*` function and add a test in `tests/test_garmin.py`.
+
+---
+
 ## What has NOT been done (potential next tasks)
 
-- **Workouts page**: `GET /v1/workouts` exists and returns workout sessions with duration/energy, but there's no dedicated page — workouts data only shows in the Explorer.
+- **Garmin backfill**: `sync_recent(days=2)` only covers today + yesterday. To backfill history, loop `garmin.sync_date(d, service)` over a date range manually or add a backfill endpoint.
+- **Health tab long-range charts**: Current sparklines are 30 days. Could add date-range picker for longer history.
 - **Weekly/monthly aggregation view**: Trends shows daily; no weekly rollup chart.
 - **Food-level detail**: Not possible — Apple Health only stores nutrient totals, not individual food items.
 - **Auth improvement**: Currently a single shared password. No multi-user support.
-- **Code splitting**: The JS bundle is ~740 KB (recharts + react-router). Vite warns about this. Could lazy-load route components.
+- **Code splitting**: The JS bundle is ~830 KB (recharts + react-router). Vite warns about this. Could lazy-load route components.
 - **Mobile date picker UX**: Native `<input type="date">` works but is ugly on iOS Safari.
 - **Notifications**: No alerting when a suspicious day is detected.
 

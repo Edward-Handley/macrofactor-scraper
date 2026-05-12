@@ -528,3 +528,21 @@ export interface CoachDraftResponse {
   date: string;
   prompt_text: string;
 }
+
+// - Garmin Health tab -
+
+export interface GarminSeriesPoint {
+  date: string;
+  value: number;
+}
+
+export interface GarminSeriesResponse {
+  metric: string;
+  units: string;
+  points: GarminSeriesPoint[];
+}
+
+export interface GarminCategoriesResponse {
+  categories: Record<string, string[]>;
+  units: Record<string, string>;
+}

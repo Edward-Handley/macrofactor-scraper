@@ -1,17 +1,18 @@
 import { NavLink } from "react-router-dom";
-import { Activity, BarChart2, BotMessageSquare, Database, Dumbbell, Moon, Ruler, Search, Settings, Sun, Scissors } from "lucide-react";
+import { Activity, BarChart2, BotMessageSquare, Database, Dumbbell, HeartPulse, Moon, Ruler, Search, Settings, Sun, Scissors } from "lucide-react";
 import { cn } from "../../lib/utils";
 
 // Morning = before 14:00, Evening = 14:00+
 const isEvening = () => new Date().getHours() >= 14;
 
 const STATIC_NAV_ITEMS = [
-  { to: "/",            label: "Today",    Icon: Activity  },
-  { to: "/trends",      label: "Trends",   Icon: BarChart2 },
-  { to: "/workouts",    label: "Workouts", Icon: Dumbbell  },
-  { to: "/data-health", label: "Data",     Icon: Database  },
-  { to: "/explorer",    label: "Explore",  Icon: Search    },
-  { to: "/settings",    label: "Settings", Icon: Settings  },
+  { to: "/",            label: "Today",    Icon: Activity   },
+  { to: "/health",      label: "Health",   Icon: HeartPulse },
+  { to: "/trends",      label: "Trends",   Icon: BarChart2  },
+  { to: "/workouts",    label: "Workouts", Icon: Dumbbell   },
+  { to: "/data-health", label: "Data",     Icon: Database   },
+  { to: "/explorer",    label: "Explore",  Icon: Search     },
+  { to: "/settings",    label: "Settings", Icon: Settings   },
 ];
 
 function NavItem({ to, label, Icon, end = false }: { to: string; label: string; Icon: React.ElementType; end?: boolean }) {
@@ -65,6 +66,7 @@ export function SidebarNav() {
       <NavItem to="/coach" label="Coach" Icon={BotMessageSquare} />
       <NavItem to="/cut-phases" label="Cut" Icon={Scissors} />
       <NavItem to="/measurements" label="Measures" Icon={Ruler} />
+      <NavItem to="/health" label="Health" Icon={HeartPulse} />
       <NavItem to="/trends" label="Trends" Icon={BarChart2} />
       <NavItem to="/workouts" label="Workouts" Icon={Dumbbell} />
       <NavItem to="/data-health" label="Data" Icon={Database} />
@@ -80,6 +82,7 @@ export function BottomNav() {
       <NavItem to="/" label="Today" Icon={Activity} end />
       <LogNavItem />
       <NavItem to="/coach" label="Coach" Icon={BotMessageSquare} />
+      <NavItem to="/health" label="Health" Icon={HeartPulse} />
       <NavItem to="/cut-phases" label="Cut" Icon={Scissors} />
       <NavItem to="/measurements" label="Measures" Icon={Ruler} />
       <NavItem to="/trends" label="Trends" Icon={BarChart2} />

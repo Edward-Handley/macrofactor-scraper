@@ -15,6 +15,50 @@ logger = logging.getLogger(__name__)
 
 _SYNC_LOCK = asyncio.Lock()
 
+# Metric taxonomy exposed to API and frontend
+GARMIN_METRIC_CATEGORIES: dict[str, list[str]] = {
+    "recovery": ["sleep_minutes", "sleep_score", "resting_heart_rate", "hrv_overnight"],
+    "wellness": [
+        "body_battery_high", "body_battery_low", "body_battery_charged", "body_battery_drained",
+        "stress_avg", "stress_max", "respiration_avg", "spo2_avg", "spo2_lowest",
+    ],
+    "training": [
+        "training_readiness_score", "vo2_max_running", "vo2_max_cycling",
+        "intensity_minutes_moderate", "intensity_minutes_vigorous",
+    ],
+    "activity": ["garmin_steps", "floors_ascended", "active_calories", "total_distance_m"],
+}
+
+GARMIN_METRIC_UNITS: dict[str, str] = {
+    "sleep_minutes": "min",
+    "sleep_score": "score",
+    "resting_heart_rate": "bpm",
+    "hrv_overnight": "ms",
+    "body_battery_high": "%",
+    "body_battery_low": "%",
+    "body_battery_charged": "%",
+    "body_battery_drained": "%",
+    "stress_avg": "score",
+    "stress_max": "score",
+    "respiration_avg": "brpm",
+    "spo2_avg": "%",
+    "spo2_lowest": "%",
+    "training_readiness_score": "score",
+    "vo2_max_running": "ml/kg/min",
+    "vo2_max_cycling": "ml/kg/min",
+    "intensity_minutes_moderate": "min",
+    "intensity_minutes_vigorous": "min",
+    "garmin_steps": "count",
+    "floors_ascended": "count",
+    "active_calories": "kcal",
+    "total_distance_m": "m",
+}
+
+# Flat set of all known metric names for validation
+ALL_GARMIN_METRICS: frozenset[str] = frozenset(
+    m for metrics in GARMIN_METRIC_CATEGORIES.values() for m in metrics
+)
+
 # ─── TOTP (stdlib only, no pyotp) ────────────────────────────────────────────
 
 def _totp(secret_b32: str) -> str:
@@ -144,6 +188,170 @@ def _extract_steps(data: dict) -> float | None:
             if steps is not None:
                 return steps
     return _safe_float(data, "totalSteps")
+
+
+def _extract_user_summary(data: dict) -> dict[str, float | None]:
+    """Extract activity summary from garminconnect get_user_summary() response."""
+    return {
+        "floors_ascended": _safe_float(data, "floorsAscended"),
+        "active_calories": (
+            _safe_float(data, "activeKilocalories")
+            or _safe_float(data, "totalKilocalories")
+        ),
+        "total_distance_m": _safe_float(data, "totalDistanceMeters"),
+        "intensity_minutes_moderate": _safe_float(data, "moderateIntensityMinutes"),
+        "intensity_minutes_vigorous": _safe_float(data, "vigorousIntensityMinutes"),
+    }
+
+
+def _extract_body_battery(data: Any) -> dict[str, float | None]:
+    """Extract body battery from garminconnect get_body_battery(date, date) response.
+
+    Returns a list of daily dicts. Each may have: charged, used (=drained),
+    bodyBatteryStatList[0].bodyBatteryHigh / bodyBatteryLow.
+    """
+    result: dict[str, float | None] = {
+        "body_battery_charged": None,
+        "body_battery_drained": None,
+        "body_battery_high": None,
+        "body_battery_low": None,
+    }
+    items = data if isinstance(data, list) else ([data] if isinstance(data, dict) else [])
+    if not items:
+        return result
+    item = items[0]
+    result["body_battery_charged"] = _safe_float(item, "charged")
+    result["body_battery_drained"] = _safe_float(item, "used") or _safe_float(item, "drained")
+    stat_list = item.get("bodyBatteryStatList") or []
+    stat = stat_list[0] if stat_list else item
+    result["body_battery_high"] = _safe_float(stat, "bodyBatteryHigh") or _safe_float(stat, "high")
+    result["body_battery_low"] = _safe_float(stat, "bodyBatteryLow") or _safe_float(stat, "low")
+    if result["body_battery_high"] is None:
+        result["body_battery_high"] = _find_numeric_by_path_hint(item, ("battery", "high"))
+    if result["body_battery_low"] is None:
+        result["body_battery_low"] = _find_numeric_by_path_hint(item, ("battery", "low"))
+    return result
+
+
+def _extract_stress(data: dict) -> dict[str, float | None]:
+    """Extract daily stress from garminconnect get_stress_data() response."""
+    avg = (
+        _safe_float(data, "avgStressLevel")
+        or _safe_float(data, "averageStressLevel")
+        or _find_numeric_by_path_hint(data, ("avg", "stress"))
+    )
+    mx = (
+        _safe_float(data, "maxStressLevel")
+        or _safe_float(data, "peakStressLevel")
+        or _find_numeric_by_path_hint(data, ("max", "stress"))
+    )
+    # Garmin returns -1 / -2 for "no stress data"
+    return {
+        "stress_avg": avg if (avg is not None and avg >= 0) else None,
+        "stress_max": mx if (mx is not None and mx >= 0) else None,
+    }
+
+
+def _extract_respiration(data: dict) -> dict[str, float | None]:
+    """Extract respiration from garminconnect get_respiration_data() response."""
+    return {
+        "respiration_avg": (
+            _safe_float(data, "avgWakingRespirationValue")
+            or _safe_float(data, "averageRespirationValue")
+            or _find_numeric_by_path_hint(data, ("avg", "respir"))
+        ),
+    }
+
+
+def _extract_spo2(data: dict) -> dict[str, float | None]:
+    """Extract SpO2 from garminconnect get_spo2_data() response."""
+    avg = (
+        _safe_float(data, "averageSpO2")
+        or _safe_float(data, "avgSpO2")
+        or _find_numeric_by_path_hint(data, ("avg", "spo2"))
+    )
+    low = (
+        _safe_float(data, "lowestSpO2")
+        or _safe_float(data, "minimumSpO2")
+        or _find_numeric_by_path_hint(data, ("low", "spo2"))
+    )
+    return {
+        "spo2_avg": avg if (avg is not None and avg > 0) else None,
+        "spo2_lowest": low if (low is not None and low > 0) else None,
+    }
+
+
+def _extract_training_readiness(data: Any) -> dict[str, float | None]:
+    """Extract training readiness score from get_training_readiness() response.
+
+    Response may be a list (one entry per reading) or a single dict.
+    """
+    item: dict = {}
+    if isinstance(data, list) and data:
+        # Prefer AFTER_WAKEUP_RESET context; fall back to first entry
+        item = next(
+            (e for e in data if e.get("inputContext") == "AFTER_WAKEUP_RESET"),
+            data[0],
+        )
+    elif isinstance(data, dict):
+        item = data
+    score = (
+        _safe_float(item, "score")
+        or _safe_float(item, "trainingReadinessScore")
+        or _find_numeric_by_path_hint(item, ("readiness", "score"))
+    )
+    return {"training_readiness_score": score}
+
+
+def _extract_training_status(data: dict) -> dict[str, float | None]:
+    """Extract VO2 max from get_training_status() response."""
+    vo2_run = (
+        _safe_float(data, "latestVo2MaxRunning")
+        or _safe_float(data, "vo2MaxRunning")
+        or _safe_float(data, "latestVo2Max")
+        or _find_numeric_by_path_hint(data, ("vo2", "run"))
+    )
+    vo2_cyc = (
+        _safe_float(data, "latestVo2MaxCycling")
+        or _safe_float(data, "vo2MaxCycling")
+        or _find_numeric_by_path_hint(data, ("vo2", "cycl"))
+    )
+    return {
+        "vo2_max_running": vo2_run,
+        "vo2_max_cycling": vo2_cyc,
+    }
+
+
+def _extract_max_metrics(data: Any) -> dict[str, float | None]:
+    """Extract VO2 max from get_max_metrics() response as fallback.
+
+    Response is typically a list of metric dicts, each with metricDescriptors + allMetrics.
+    """
+    result: dict[str, float | None] = {"vo2_max_running": None, "vo2_max_cycling": None}
+    items = data if isinstance(data, list) else ([data] if isinstance(data, dict) else [])
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        # Common shape: allMetrics.metricsMap.VO2MAXVALUE[0].value
+        try:
+            metrics_map = item["allMetrics"]["metricsMap"]
+            for key, values in metrics_map.items():
+                key_up = key.upper()
+                if "VO2MAX" in key_up and isinstance(values, list) and values:
+                    val = _safe_float(values[0], "value")
+                    if val is not None:
+                        if "CYCL" in key_up:
+                            result["vo2_max_cycling"] = val
+                        else:
+                            result["vo2_max_running"] = val
+        except (KeyError, TypeError):
+            pass
+        # Heuristic fallback
+        if result["vo2_max_running"] is None:
+            result["vo2_max_running"] = _find_numeric_by_path_hint(item, ("vo2", "run"))
+        if result["vo2_max_cycling"] is None:
+            result["vo2_max_cycling"] = _find_numeric_by_path_hint(item, ("vo2", "cycl"))
+    return result
 
 
 # ─── GarminSyncService ───────────────────────────────────────────────────────
@@ -285,6 +493,99 @@ class GarminSyncService:
                 )
         except Exception as exc:
             logger.warning("Garmin steps fetch failed for %s: %s", date_str, exc)
+
+        # User summary: floors, active calories, distance, intensity minutes
+        try:
+            summary_data = self._client.get_user_summary(date_str)
+            summary = _extract_user_summary(summary_data)
+            for name, val in summary.items():
+                if val is not None:
+                    results[name] = service.upsert_garmin_metric(
+                        name, GARMIN_METRIC_UNITS[name], date_str, val
+                    )
+        except Exception as exc:
+            logger.warning("Garmin user summary fetch failed for %s: %s", date_str, exc)
+
+        # Body battery
+        try:
+            bb_data = self._client.get_body_battery(date_str, date_str)
+            bb = _extract_body_battery(bb_data)
+            for name, val in bb.items():
+                if val is not None:
+                    results[name] = service.upsert_garmin_metric(
+                        name, GARMIN_METRIC_UNITS[name], date_str, val
+                    )
+        except Exception as exc:
+            logger.warning("Garmin body battery fetch failed for %s: %s", date_str, exc)
+
+        # Stress
+        try:
+            stress_data = self._client.get_stress_data(date_str)
+            stress = _extract_stress(stress_data)
+            for name, val in stress.items():
+                if val is not None:
+                    results[name] = service.upsert_garmin_metric(
+                        name, GARMIN_METRIC_UNITS[name], date_str, val
+                    )
+        except Exception as exc:
+            logger.warning("Garmin stress fetch failed for %s: %s", date_str, exc)
+
+        # Respiration
+        try:
+            resp_data = self._client.get_respiration_data(date_str)
+            resp = _extract_respiration(resp_data)
+            for name, val in resp.items():
+                if val is not None:
+                    results[name] = service.upsert_garmin_metric(
+                        name, GARMIN_METRIC_UNITS[name], date_str, val
+                    )
+        except Exception as exc:
+            logger.warning("Garmin respiration fetch failed for %s: %s", date_str, exc)
+
+        # SpO2
+        try:
+            spo2_data = self._client.get_spo2_data(date_str)
+            spo2 = _extract_spo2(spo2_data)
+            for name, val in spo2.items():
+                if val is not None:
+                    results[name] = service.upsert_garmin_metric(
+                        name, GARMIN_METRIC_UNITS[name], date_str, val
+                    )
+        except Exception as exc:
+            logger.warning("Garmin SpO2 fetch failed for %s: %s", date_str, exc)
+
+        # Training readiness
+        try:
+            tr_data = self._client.get_training_readiness(date_str)
+            tr = _extract_training_readiness(tr_data)
+            for name, val in tr.items():
+                if val is not None:
+                    results[name] = service.upsert_garmin_metric(
+                        name, GARMIN_METRIC_UNITS[name], date_str, val
+                    )
+        except Exception as exc:
+            logger.warning("Garmin training readiness fetch failed for %s: %s", date_str, exc)
+
+        # Training status (VO2 max primary)
+        try:
+            ts_data = self._client.get_training_status(date_str)
+            ts = _extract_training_status(ts_data)
+            for name, val in ts.items():
+                if val is not None:
+                    results[name] = service.upsert_garmin_metric(
+                        name, GARMIN_METRIC_UNITS[name], date_str, val
+                    )
+            # Fallback VO2 max from max_metrics if training_status missed it
+            if ts.get("vo2_max_running") is None and ts.get("vo2_max_cycling") is None:
+                mm_data = self._client.get_max_metrics(date_str)
+                mm = _extract_max_metrics(mm_data)
+                for name, val in mm.items():
+                    if val is not None:
+                        results[name] = service.upsert_garmin_metric(
+                            name, GARMIN_METRIC_UNITS[name], date_str, val
+                        )
+        except Exception as exc:
+            logger.warning("Garmin training status fetch failed for %s: %s", date_str, exc)
 
         if results:
             self._last_sync_at = datetime.now(timezone.utc)

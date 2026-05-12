@@ -141,6 +141,9 @@ export const api = {
         `/v1/garmin/sync${date ? `?sync_date=${date}` : ""}`,
         { method: "POST" }
       ),
+    categories: () => request<import("./types").GarminCategoriesResponse>("/v1/garmin/categories"),
+    series: (metric: string, days = 30) =>
+      request<import("./types").GarminSeriesResponse>(`/v1/garmin/series/${metric}?days=${days}`),
   },
 
   coach: {
