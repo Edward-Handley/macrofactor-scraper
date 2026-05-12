@@ -645,6 +645,22 @@ async def garmin_manual_sync(
     return {"synced": True, "changed": changed if isinstance(changed, dict) else {}}
 
 
+@app.get("/v1/garmin/debug/{for_date}")
+async def garmin_debug(
+    for_date: date,
+    x_api_key: str | None = Header(default=None),
+    settings: Settings = Depends(get_settings),
+) -> dict:
+    if not _valid_api_key(x_api_key, settings):
+        raise HTTPException(status_code=401, detail="Ingest API key required")
+    garmin = getattr(app.state, "garmin_service", None)
+    if garmin is None:
+        raise HTTPException(status_code=503, detail="Garmin not configured - set GARMIN_USERNAME and GARMIN_PASSWORD")
+    from macrofactor_scraper.garmin import _SYNC_LOCK
+    async with _SYNC_LOCK:
+        return await asyncio.get_event_loop().run_in_executor(None, garmin.debug_date, for_date)
+
+
 @app.get("/v1/garmin/values/{for_date}", dependencies=[Depends(require_private_access)])
 async def garmin_values(
     for_date: date,

@@ -9,7 +9,6 @@ import logging
 import struct
 import time
 from datetime import date, datetime, timedelta, timezone
-from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -43,6 +42,37 @@ def _safe_float(data: Any, *keys: str) -> float | None:
         return None
 
 
+def _safe_float_path(data: Any, path: tuple[str, ...]) -> float | None:
+    return _safe_float(data, *path)
+
+
+def _iter_numeric_paths(data: Any, prefix: tuple[str, ...] = ()) -> list[tuple[str, float]]:
+    paths: list[tuple[str, float]] = []
+    if isinstance(data, dict):
+        for key, value in data.items():
+            paths.extend(_iter_numeric_paths(value, (*prefix, str(key))))
+    elif isinstance(data, list):
+        for index, value in enumerate(data[:5]):
+            paths.extend(_iter_numeric_paths(value, (*prefix, str(index))))
+    else:
+        try:
+            if isinstance(data, bool) or data is None:
+                return paths
+            paths.append((".".join(prefix), float(data)))
+        except (TypeError, ValueError):
+            pass
+    return paths
+
+
+def _find_numeric_by_path_hint(data: Any, required_tokens: tuple[str, ...]) -> float | None:
+    normalized_tokens = tuple(token.lower() for token in required_tokens)
+    for path, value in _iter_numeric_paths(data):
+        normalized_path = path.lower().replace("_", "").replace("-", "")
+        if all(token in normalized_path for token in normalized_tokens):
+            return value
+    return None
+
+
 def _extract_sleep(data: dict) -> dict[str, float | None]:
     """Extract sleep metrics from garminconnect get_sleep_data() response."""
     result: dict[str, float | None] = {"sleep_minutes": None, "sleep_score": None}
@@ -53,12 +83,22 @@ def _extract_sleep(data: dict) -> dict[str, float | None]:
         result["sleep_minutes"] = round(secs / 60, 1)
 
     # Sleep score — try multiple paths garmin has used over versions
-    score = (
-        _safe_float(data, "overallSleepScore", "value")
-        or _safe_float(data, "sleepScorePVO", "value")
-        or _safe_float(dto, "sleepScorePVO", "value")
-        or _safe_float(data, "averageOverallScore")
+    score_paths = (
+        ("dailySleepDTO", "sleepScores", "overall", "value"),
+        ("dailySleepDTO", "sleepScores", "overall"),
+        ("sleepScores", "overall", "value"),
+        ("sleepScores", "overall"),
+        ("dailySleepDTO", "overallSleepScore", "value"),
+        ("overallSleepScore", "value"),
+        ("dailySleepDTO", "sleepScorePVO", "value"),
+        ("sleepScorePVO", "value"),
+        ("dailySleepDTO", "sleepScore", "value"),
+        ("sleepScore", "value"),
+        ("averageOverallScore",),
     )
+    score = next((value for path in score_paths if (value := _safe_float_path(data, path)) is not None), None)
+    if score is None:
+        score = _find_numeric_by_path_hint(data, ("sleep", "score", "overall"))
     result["sleep_score"] = score
     return result
 
@@ -80,11 +120,17 @@ def _extract_hrv(data: dict | None) -> float | None:
     """Extract overnight HRV from garminconnect get_hrv_data() response."""
     if not data:
         return None
-    return (
-        _safe_float(data, "hrvSummary", "lastNight")
-        or _safe_float(data, "hrvSummary", "weeklyAverage")
-        or _safe_float(data, "lastNight")
+    hrv_paths = (
+        ("hrvSummary", "lastNightAvg"),
+        ("hrvSummary", "lastNightAverage"),
+        ("hrvSummary", "lastNightMean"),
+        ("hrvSummary", "lastNight"),
+        ("lastNightAvg",),
+        ("lastNightAverage",),
+        ("lastNightMean",),
+        ("lastNight",),
     )
+    return next((value for path in hrv_paths if (value := _safe_float_path(data, path)) is not None), None)
 
 
 def _extract_steps(data: dict) -> float | None:
@@ -101,6 +147,22 @@ def _extract_steps(data: dict) -> float | None:
 
 
 # ─── GarminSyncService ───────────────────────────────────────────────────────
+
+def summarize_garmin_payload(data: Any, keywords: tuple[str, ...]) -> dict[str, Any]:
+    """Return a small, non-raw summary for troubleshooting Garmin response shapes."""
+    normalized_keywords = tuple(keyword.lower() for keyword in keywords)
+    numeric_matches = []
+    for path, value in _iter_numeric_paths(data):
+        normalized_path = path.lower().replace("_", "").replace("-", "")
+        if any(keyword in normalized_path for keyword in normalized_keywords):
+            numeric_matches.append({"path": path, "value": value})
+    top_level_keys = list(data.keys())[:50] if isinstance(data, dict) else None
+    return {
+        "type": type(data).__name__,
+        "top_level_keys": top_level_keys,
+        "numeric_matches": numeric_matches[:50],
+    }
+
 
 class GarminSyncService:
     def __init__(self, username: str, password: str, mfa_secret: str | None = None, tokenstore: str | None = None) -> None:
@@ -237,6 +299,32 @@ class GarminSyncService:
         for offset in range(days):
             d = today - timedelta(days=offset)
             self.sync_date(d, service)
+
+    def debug_date(self, d: date) -> dict[str, Any]:
+        """Fetch Garmin payloads for a date and return only parser/debug summaries."""
+        if not self._ensure_client():
+            return {"ok": False, "last_error": self._last_error}
+
+        date_str = d.isoformat()
+        result: dict[str, Any] = {"ok": True, "date": date_str, "extracted": {}, "payloads": {}}
+
+        try:
+            sleep_data = self._client.get_sleep_data(date_str)
+            result["extracted"]["sleep"] = _extract_sleep(sleep_data)
+            result["payloads"]["sleep"] = summarize_garmin_payload(sleep_data, ("sleep", "score"))
+        except Exception as exc:
+            result["payloads"]["sleep"] = {"error": str(exc)}
+
+        try:
+            hrv_data = self._client.get_hrv_data(date_str)
+            result["extracted"]["hrv_overnight"] = _extract_hrv(hrv_data)
+            result["payloads"]["hrv"] = summarize_garmin_payload(
+                hrv_data, ("hrv", "lastnight", "night", "weekly")
+            )
+        except Exception as exc:
+            result["payloads"]["hrv"] = {"error": str(exc)}
+
+        return result
 
     def get_garmin_values_for_date(self, d: date, service: Any) -> dict[str, float | None]:
         """Return cached Garmin values for date from health_records (for evening form autofill)."""
