@@ -1,148 +1,222 @@
-# macrofactor-scraper
+# macrofactor-scraper — personal health dashboard
 
-Local-first FastAPI backend for ingesting Apple Health data exported by Health Auto Export.
+FastAPI backend + React dashboard for nutrition tracking and Garmin biometrics, running at `health.ar333lot.lol`.
 
-This project previously explored direct MacroFactor Firebase reads. The default runtime path now avoids MacroFactor private APIs and stores data posted by Health Auto Export into local SQLite. That means the API can only expose data available in Apple Health, not MacroFactor-only details such as food item names, recipes, coaching state, expenditure internals, or app targets.
+## Data sources
 
-## Status
+| Source | How it gets in |
+|--------|----------------|
+| MacroFactor (nutrition) | iPhone → Apple Health → HealthAutoExport (hourly JSON) → `POST /v1/ingest/health-auto-export` |
+| Garmin Connect (biometrics) | Background sync every 6 hours; manual via `POST /v1/garmin/sync` |
 
-Implemented:
+## Stack
 
-- `POST /v1/ingest/health-auto-export` with `X-API-Key` authentication.
-- Private API reads with a dedicated read `X-API-Key` or a signed dashboard session cookie.
-- Browser dashboard with login, React charts, daily summary cards, API Explorer, metric catalog, data quality views, saved preferences, ingest status, and CSV/Excel feed exports.
-- Generic Health Auto Export JSON metric ingestion for objects shaped like `name`, `units`, and `data`.
-- SQLite storage for raw ingest batches, normalized health metric rows, and workout rows.
-- Metric listing, per-metric date filtering, daily summaries, dashboard summaries, workouts, ingest status, CSV exports, and health check routes.
-- Protected dashboard preference APIs backed by SQLite.
-- Nutrition-friendly daily summaries with unit normalization for common metric names such as `dietary_energy`, `protein`, `carbohydrates`, `total_fat`, `dietary_water`, `body_mass`, `step_count`, and `active_energy`.
+| Layer | Tech |
+|-------|------|
+| Backend | Python 3.12 + FastAPI + SQLite (no ORM) |
+| Frontend | React 18 + Vite + TypeScript + Tailwind CSS v4 + React Query v5 + Recharts |
+| Deploy | Docker Compose + Caddy (HTTPS) |
 
-Legacy Firebase modules remain importable under the original module names for reference and tests, but they are not used by the FastAPI app.
+## Pages
+
+| Route | Purpose |
+|-------|---------|
+| `/` | Today — calorie ring, macros, stats, 30-day heatmap, Garmin recovery cards |
+| `/health` | All Garmin metrics with 30-day sparklines, date picker, manual sync |
+| `/trends` | Time-series charts with field toggles + 7d moving average overlay |
+| `/workouts` | Strong workout analytics (weekly load, group balance, exercise PRs) |
+| `/measurements` | Body measurements history |
+| `/cut-phases` | Diet phase tracking |
+| `/coach` | AI coaching prompt |
+| `/morning` `/evening` | Daily log forms |
+| `/data-health` | Data quality diagnostics + one-click repair |
+| `/explorer` | Raw metric explorer (sort / filter / paginate / CSV export) |
+| `/settings` | Dashboard preferences |
+
+## Garmin metrics
+
+| Category | Metrics |
+|----------|---------|
+| Recovery | Sleep duration, sleep score, resting HR, overnight HRV |
+| Wellness | Body battery (high/low/charged/drained), stress (avg/max), respiration avg, SpO₂ (avg/lowest) |
+| Training | Training readiness score, VO₂ max running/cycling, intensity minutes (moderate/vigorous) |
+| Activity | Steps, floors ascended, active calories, total distance |
 
 ## Setup
 
-Requires Python 3.12+.
-The production dashboard build also requires Node 20+.
+Requires Python 3.12+ and Node 20+.
 
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -e ".[dev]"
-Copy-Item .env.example .env
+Copy-Item .env.example .env   # then fill in values
 ```
 
-Edit `.env`:
+### .env variables
 
 ```dotenv
-HEALTH_EXPORT_API_KEY=change-me-local-secret
-HEALTH_EXPORT_READ_API_KEY=change-me-read-secret
+HEALTH_EXPORT_API_KEY=          # ingest write key (used by HealthAutoExport + Garmin sync)
+HEALTH_EXPORT_READ_API_KEY=     # read-only key (dashboard, CSV exports)
 HEALTH_EXPORT_SQLITE_PATH=health_export.sqlite3
-SESSION_SECRET=change-me-session-secret
-DASHBOARD_PASSWORD=change-me-dashboard-password
+SESSION_SECRET=                 # signs dashboard login cookies
+DASHBOARD_PASSWORD=             # browser login password
+
+GARMIN_USERNAME=                # Garmin account email
+GARMIN_PASSWORD=                # Garmin account password
+GARMIN_MFA_SECRET=              # optional — TOTP secret for 2FA accounts
 ```
 
-`HEALTH_EXPORT_API_KEY` is the ingest-only secret Health Auto Export sends in the `X-API-Key` header.
-`HEALTH_EXPORT_READ_API_KEY` is the read-only secret for API reads, CSV exports, and Excel Power Query refreshes. If it is unset, read endpoints temporarily accept `HEALTH_EXPORT_API_KEY` for backward compatibility.
-`SESSION_SECRET` signs dashboard cookies. `DASHBOARD_PASSWORD` is used for browser login and defaults to `HEALTH_EXPORT_API_KEY` if unset.
-
-## Run
+## Run locally
 
 ```powershell
+# Backend
 uvicorn macrofactor_scraper.api:app --host 127.0.0.1 --port 8000 --reload
-```
 
-Open:
-
-- API docs: <http://127.0.0.1:8000/docs>
-- Health check: <http://127.0.0.1:8000/health>
-- Dashboard: <http://127.0.0.1:8000/>
-
-For frontend development, run the API above and start Vite in another shell:
-
-```powershell
+# Frontend (separate terminal)
 cd frontend
 npm install
-npm run dev
+npm run dev    # http://127.0.0.1:5173  — proxies /v1 to port 8000
 ```
-
-Open <http://127.0.0.1:5173/>. Vite proxies `/v1` API calls to the local FastAPI server.
-
-To build the dashboard assets served by FastAPI:
 
 ```powershell
-cd frontend
-npm run build
+# Tests
+python -m pytest --basetemp=tmp_pytest -p no:cacheprovider -q
+# 84 passed
+
+# Build frontend for production
+cd frontend && npm run build
 ```
 
-## Endpoints
+## Deploy
 
-- `GET /health`
-- `POST /v1/ingest/health-auto-export`
-- `GET /v1/metrics`
-- `GET /v1/metrics/{metric_name}?start=YYYY-MM-DD&end=YYYY-MM-DD`
-- `GET /v1/daily-summary?start=YYYY-MM-DD&end=YYYY-MM-DD`
-- `GET /v1/dashboard/summary?start=YYYY-MM-DD&end=YYYY-MM-DD`
-- `GET /v1/dashboard/summary?start=YYYY-MM-DD&end=YYYY-MM-DD&include_hidden=true`
-- `GET /v1/dashboard/preferences`
-- `PUT /v1/dashboard/preferences`
-- `GET /v1/dashboard/metric-catalog`
-- `GET /v1/diagnostics/metrics/{YYYY-MM-DD}`
-- `GET /v1/workouts?start=YYYY-MM-DD&end=YYYY-MM-DD`
-- `GET /v1/ingest/status`
-- `GET /v1/export/daily-summary.csv?start=YYYY-MM-DD&end=YYYY-MM-DD`
-- `GET /v1/export/metrics/{metric_name}.csv?start=YYYY-MM-DD&end=YYYY-MM-DD`
-- `GET /v1/excel/daily-log.csv?start=YYYY-MM-DD&end=YYYY-MM-DD`
-- `GET /v1/excel/calories-weight.csv?start=YYYY-MM-DD&end=YYYY-MM-DD`
-- `GET /v1/excel/metrics/{metric_name}.csv?start=YYYY-MM-DD&end=YYYY-MM-DD`
-
-All `/v1` read endpoints require either `X-API-Key: <HEALTH_EXPORT_READ_API_KEY>` or a dashboard login session cookie. `/health` remains public. In production, `/docs`, `/redoc`, and `/openapi.json` are disabled.
-
-Excel Power Query should use Data from Web with the feed URL and an `X-API-Key` request header. Do not put API keys in feed URLs.
-
-## Health Auto Export
-
-Configure Health Auto Export:
-
-- Automation type: REST API.
-- Format: JSON.
-- Export version: Version 2.
-- Data type: start with Health Metrics, then add Workouts as a second automation if needed.
-- URL: your local or tunneled `/v1/ingest/health-auto-export` endpoint.
-- Header: `X-API-Key: <HEALTH_EXPORT_API_KEY>`.
-- Date range: use "Since Last Sync" for ongoing sync and Manual Export for history.
-- Cadence: any cadence works, including hourly. The server handles running-total deduplication automatically.
-
-For iPhone testing, run the API locally on `127.0.0.1:8000` and expose it temporarily with a tunnel such as Cloudflare Tunnel or ngrok. iOS background exports can be delayed when the phone is locked, Background App Refresh is unavailable, or Low Power Mode is enabled.
-
-Nutrition summary fields (calories, protein, carbs, fat, water, active energy) are aggregated per `(date, metric, source)`. When HealthAutoExport sends hourly syncs, MacroFactor writes an updated running-total row at midnight for that day — only the **latest midnight snapshot** for each source is used; earlier snapshots from the same hourly run and any intraday meal-event rows from the same source are ignored. When no midnight snapshot exists, intraday events are summed. Per-day totals are then summed across sources. Weight uses latest-wins.
-
-To inspect a suspicious day, call `/v1/diagnostics/metrics/YYYY-MM-DD` with the read API key. The response includes `collapsed_value` (what the summary actually uses) and flags `suspicious: true` when the collapsed value differs from the naive sum.
-
-To retroactively clean up stacked rows from before this fix, use the repair CLI:
-
-```powershell
-python -m macrofactor_scraper.repair --dry-run
-python -m macrofactor_scraper.repair --apply
+```bash
+git pull
+docker compose up --build -d
 ```
 
-Or call `POST /v1/admin/repair?date=YYYY-MM-DD&dry_run=false` with the ingest API key to repair a single day from the Data Health dashboard.
+## Garmin backfill
+
+The background sync covers today + yesterday. To backfill history, loop the sync endpoint from the VPS:
+
+```bash
+# Backfill 90 days (adjust seq range as needed)
+for i in $(seq 89 -1 0); do
+  d=$(date -d "-$i days" +%Y-%m-%d)
+  echo "Syncing $d..."
+  curl -s -X POST \
+    -H "X-API-Key: $HEALTH_EXPORT_API_KEY" \
+    "https://health.ar333lot.lol/v1/garmin/sync?sync_date=$d"
+  echo ""
+  sleep 2
+done
+```
+
+Or via Docker exec (single login, faster):
+
+```bash
+docker compose exec api python - <<'EOF'
+from datetime import date, timedelta
+from macrofactor_scraper.garmin import GarminSyncService
+from macrofactor_scraper.health_export import HealthAutoExportService
+from macrofactor_scraper.config import get_settings
+
+settings = get_settings()
+svc = HealthAutoExportService(settings.sqlite_path)
+garmin = GarminSyncService(settings.garmin_username, settings.garmin_password)
+
+start = date(2026, 1, 1)   # adjust start date
+d = date.today()
+while d >= start:
+    print(f"Syncing {d}...")
+    print(garmin.sync_date(d, svc))
+    d -= timedelta(days=1)
+EOF
+```
+
+## Troubleshooting Garmin
+
+If a metric is missing on the `/health` tab:
+
+```bash
+curl -H "X-API-Key: $HEALTH_EXPORT_API_KEY" \
+  "https://health.ar333lot.lol/v1/garmin/debug/YYYY-MM-DD"
+```
+
+Check `extracted.*` and `payloads.*.numeric_matches` for the actual payload path. If it differs from what the extractor expects, update the relevant `_extract_*` function in `src/macrofactor_scraper/garmin.py` and add a test in `tests/test_garmin.py`.
+
+## API endpoints
+
+```
+GET  /health                                          public health check
+POST /v1/ingest/health-auto-export                    ingest key
+GET  /v1/metrics
+GET  /v1/metrics/{metric_name}?start=&end=
+GET  /v1/daily-summary?start=&end=
+GET  /v1/dashboard/summary?start=&end=
+GET  /v1/dashboard/preferences
+PUT  /v1/dashboard/preferences
+GET  /v1/dashboard/metric-catalog
+GET  /v1/diagnostics/metrics/{YYYY-MM-DD}
+GET  /v1/workouts?start=&end=
+GET  /v1/ingest/status
+POST /v1/admin/repair?date=YYYY-MM-DD&dry_run=false   ingest key
+GET  /v1/export/daily-summary.csv
+GET  /v1/export/metrics/{metric_name}.csv
+GET  /v1/excel/daily-log.csv
+GET  /v1/excel/calories-weight.csv
+GET  /v1/excel/metrics/{metric_name}.csv
+
+GET  /v1/garmin/status
+POST /v1/garmin/sync?sync_date=YYYY-MM-DD             ingest key
+GET  /v1/garmin/values/{YYYY-MM-DD}
+GET  /v1/garmin/categories
+GET  /v1/garmin/series/{metric_name}?days=30
+GET  /v1/garmin/debug/{YYYY-MM-DD}                    ingest key
+```
+
+All `/v1` read endpoints require `X-API-Key: <HEALTH_EXPORT_READ_API_KEY>` or a dashboard session cookie.
+
+## HealthAutoExport config
+
+- Automation type: REST API
+- Format: JSON, Version 2
+- URL: `https://health.ar333lot.lol/v1/ingest/health-auto-export`
+- Header: `X-API-Key: <HEALTH_EXPORT_API_KEY>`
+- Date range: "Since Last Sync" for ongoing, manual export for history
+- Cadence: hourly recommended
 
 ## Storage
 
-The SQLite database contains:
+SQLite tables:
+- `ingest_batches` — raw payload per sync (hash, headers, JSON)
+- `health_records` — one row per metric data point (metric name, units, date, quantity, source, fingerprint)
+- `workout_records` — workout sessions from HealthAutoExport
+- `strong_workout_sessions` / `strong_workout_sets` — imported from Strong CSV
+- `dashboard_preferences` — user settings
+- `cut_phases` / `daily_log` / `body_measurements` — manual tracking
 
-- `ingest_batches`: received time, source headers with secrets redacted, payload hash, and raw payload JSON.
-- `health_records`: one normalized row per metric data point, with metric name, units, date/timestamp, quantity, source, raw row JSON, and a dedupe fingerprint.
-- `workout_records`: workout rows with start/end times, duration, energy, raw row JSON, and a dedupe fingerprint.
-- `dashboard_preferences`: one saved dashboard preference document, including visible fields, hidden fields, trusted or untrusted metrics, source filters, default charts, and preferred range.
+Garmin metrics land in `health_records` with `source = 'Garmin'`, same schema as HealthAutoExport data.
 
-Unknown metric row fields are preserved in `raw_json`, so special data such as blood pressure, heart rate details, and sleep segments can be inspected even when no first-class columns exist yet.
+## Key files
 
-## Tests
-
-```powershell
-pytest
-python -m compileall src tests
-cd frontend
-npm run build
 ```
+src/macrofactor_scraper/
+  api.py            — all FastAPI endpoints
+  health_export.py  — ingest, aggregation, diagnostics, upsert_garmin_metric
+  garmin.py         — Garmin extractors, GarminSyncService, background loop
+  models.py         — Pydantic response models
+  config.py         — Settings from .env
+
+frontend/src/
+  pages/health.tsx       — Garmin health tab
+  pages/today.tsx        — main dashboard
+  lib/api.ts             — typed fetch client
+  hooks/use-dashboard.ts — React Query hooks
+
+tests/
+  test_api.py       — integration tests
+  test_garmin.py    — Garmin extractor unit tests (22 tests)
+```
+
+See `AGENTS.md` for full technical reference (architecture, query keys, constraints).
