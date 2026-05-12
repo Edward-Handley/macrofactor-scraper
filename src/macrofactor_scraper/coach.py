@@ -231,8 +231,10 @@ def build_coach_data(service: Any, checkin_date: date) -> CoachData:
     weight_7d_avg = sum(weights) / len(weights) if weights else None
     weight_delta_7d = (weight_today - weight_7d_avg) if (weight_today is not None and weight_7d_avg is not None) else None
 
-    # Today's daily_log
+    # Today's daily_log (training, subjective AM scores, cut phase)
     log = service.get_daily_log(checkin_date.isoformat())
+    # Yesterday's daily_log (sleep data entered the previous evening or morning)
+    yesterday_log = service.get_daily_log(yesterday.isoformat())
 
     # Garmin data for yesterday — authoritative for sleep, steps, RHR, HRV
     garmin = _get_garmin_values(service, yesterday)
@@ -256,25 +258,25 @@ def build_coach_data(service: Any, checkin_date: date) -> CoachData:
     # Steps: prefer Garmin (more accurate) over Apple Health
     steps: float | None = garmin.get("garmin_steps") or (yest.steps if yest else None)
 
-    # Sleep: prefer Garmin over manual daily_log entry
+    # Sleep: prefer Garmin (yesterday) → yesterday's manual log entry
     garmin_sleep_mins = garmin.get("sleep_minutes")
     sleep_hours: float | None = (
         round(garmin_sleep_mins / 60, 2) if garmin_sleep_mins is not None
-        else (float(log["sleep_hours"]) if log and log.get("sleep_hours") is not None else None)
+        else (float(yesterday_log["sleep_hours"]) if yesterday_log and yesterday_log.get("sleep_hours") is not None else None)
     )
     sleep_score: int | None = (
         int(round(garmin.get("sleep_score"))) if garmin.get("sleep_score") is not None
-        else (log.get("sleep_score") if log else None)
+        else (yesterday_log.get("sleep_score") if yesterday_log else None)
     )
 
-    # RHR + HRV: prefer Garmin over manual daily_log entry
+    # RHR + HRV: prefer Garmin (yesterday) → yesterday's manual log entry
     rhr: int | None = (
         int(round(garmin.get("resting_heart_rate"))) if garmin.get("resting_heart_rate") is not None
-        else (log.get("rhr") if log else None)
+        else (yesterday_log.get("rhr") if yesterday_log else None)
     )
     hrv_overnight: int | None = (
         int(round(garmin.get("hrv_overnight"))) if garmin.get("hrv_overnight") is not None
-        else (log.get("hrv_overnight") if log else None)
+        else (yesterday_log.get("hrv_overnight") if yesterday_log else None)
     )
 
     # Active cut phase
@@ -295,7 +297,7 @@ def build_coach_data(service: Any, checkin_date: date) -> CoachData:
         weight_7d_avg=weight_7d_avg,
         weight_delta_7d=weight_delta_7d,
         sleep_hours=sleep_hours,
-        sleep_quality=log.get("sleep_quality") if log else None,
+        sleep_quality=yesterday_log.get("sleep_quality") if yesterday_log else None,
         sleep_score=sleep_score,
         rhr=rhr,
         hrv_overnight=hrv_overnight,
