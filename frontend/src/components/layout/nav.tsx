@@ -1,5 +1,5 @@
 import { NavLink } from "react-router-dom";
-import { Activity, BarChart2, BotMessageSquare, Database, Dumbbell, Moon, Search, Settings, Sun, Scissors } from "lucide-react";
+import { Activity, BarChart2, BotMessageSquare, Database, Dumbbell, Moon, Ruler, Search, Settings, Sun, Scissors } from "lucide-react";
 import { cn } from "../../lib/utils";
 
 // Morning = before 14:00, Evening = 14:00+
@@ -64,6 +64,7 @@ export function SidebarNav() {
       <LogNavItem />
       <NavItem to="/coach" label="Coach" Icon={BotMessageSquare} />
       <NavItem to="/cut-phases" label="Cut" Icon={Scissors} />
+      <NavItem to="/measurements" label="Measures" Icon={Ruler} />
       <NavItem to="/trends" label="Trends" Icon={BarChart2} />
       <NavItem to="/workouts" label="Workouts" Icon={Dumbbell} />
       <NavItem to="/data-health" label="Data" Icon={Database} />
@@ -80,6 +81,7 @@ export function BottomNav() {
       <LogNavItem />
       <NavItem to="/coach" label="Coach" Icon={BotMessageSquare} />
       <NavItem to="/cut-phases" label="Cut" Icon={Scissors} />
+      <NavItem to="/measurements" label="Measures" Icon={Ruler} />
       <NavItem to="/trends" label="Trends" Icon={BarChart2} />
       <NavItem to="/workouts" label="Workouts" Icon={Dumbbell} />
       <NavItem to="/data-health" label="Data" Icon={Database} />

@@ -1,5 +1,5 @@
 export function fmt(value: number | null | undefined, decimals = 0): string {
-  if (value == null) return "—";
+  if (value == null) return "-";
   return value.toLocaleString("en", {
     minimumFractionDigits: decimals,
     maximumFractionDigits: decimals,
@@ -48,7 +48,7 @@ export function dayProgressFraction(): number {
 }
 
 export function deltaArrow(delta: number): string {
-  if (delta > 0) return "↑";
-  if (delta < 0) return "↓";
-  return "→";
+  if (delta > 0) return "up";
+  if (delta < 0) return "down";
+  return "->";
 }

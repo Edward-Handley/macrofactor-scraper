@@ -11,7 +11,7 @@ type ChartRow = Record<string, string | number | null>;
 interface TrendChartProps {
   /** Pre-computed rows with date + field keys (and optional <field>_ma keys) */
   rawData?: ChartRow[];
-  /** Legacy: DailySummary[] — used by callers that don't pre-process */
+  /** Legacy: DailySummary[]  -  used by callers that don't pre-process */
   data?: DailySummary[];
   fields: SummaryField[];
   maFields?: SummaryField[];

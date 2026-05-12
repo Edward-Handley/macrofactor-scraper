@@ -10,6 +10,7 @@ import { Morning } from "./pages/morning";
 import { Evening } from "./pages/evening";
 import { CutPhases } from "./pages/cut-phases";
 import { Coach } from "./pages/coach";
+import { Measurements } from "./pages/measurements";
 
 export const router = createBrowserRouter([
   {
@@ -26,6 +27,7 @@ export const router = createBrowserRouter([
       { path: "evening", element: <Evening /> },
       { path: "cut-phases", element: <CutPhases /> },
       { path: "coach", element: <Coach /> },
+      { path: "measurements", element: <Measurements /> },
     ],
   },
 ]);

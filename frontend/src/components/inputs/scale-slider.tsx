@@ -5,29 +5,29 @@ export type ScaleVariant =
   | "hunger" | "stress" | "digestion" | "sleep_quality" | "default";
 
 const ANCHOR_LABELS: Record<ScaleVariant, [string, string, string]> = {
-  energy:        ["Dead", "OK", "🔥"],
-  soreness:      ["None", "Moderate", "🤕"],
-  mood:          ["Awful", "OK", "😄"],
-  motivation:    ["None", "OK", "🚀"],
-  hunger:        ["None", "Normal", "🍽️"],
-  stress:        ["None", "Moderate", "🤯"],
-  digestion:     ["Awful", "OK", "✅"],
+  energy:        ["Dead", "OK", "Great"],
+  soreness:      ["None", "Moderate", "High"],
+  mood:          ["Awful", "OK", "Great"],
+  motivation:    ["None", "OK", "High"],
+  hunger:        ["None", "Normal", "High"],
+  stress:        ["None", "Moderate", "High"],
+  digestion:     ["Awful", "OK", "Great"],
   sleep_quality: ["Terrible", "OK", "Perfect"],
   default:       ["Low", "Mid", "High"],
 };
 
-// Color per value 1-10: red → amber → green
+// Color per value 1-10: red to amber to green.
 const COLOR_CLASSES = [
-  "bg-red-600 border-red-500 text-white",        // 1
-  "bg-red-500 border-red-400 text-white",        // 2
-  "bg-orange-600 border-orange-500 text-white",  // 3
-  "bg-orange-500 border-orange-400 text-white",  // 4
-  "bg-amber-500 border-amber-400 text-white",    // 5
-  "bg-yellow-500 border-yellow-400 text-zinc-900", // 6
-  "bg-lime-500 border-lime-400 text-zinc-900",   // 7
-  "bg-green-500 border-green-400 text-white",    // 8
-  "bg-emerald-500 border-emerald-400 text-white", // 9
-  "bg-emerald-400 border-emerald-300 text-zinc-900", // 10
+  "bg-red-600 border-red-500 text-white",
+  "bg-red-500 border-red-400 text-white",
+  "bg-orange-600 border-orange-500 text-white",
+  "bg-orange-500 border-orange-400 text-white",
+  "bg-amber-500 border-amber-400 text-white",
+  "bg-yellow-500 border-yellow-400 text-zinc-900",
+  "bg-lime-500 border-lime-400 text-zinc-900",
+  "bg-green-500 border-green-400 text-white",
+  "bg-emerald-500 border-emerald-400 text-white",
+  "bg-emerald-400 border-emerald-300 text-zinc-900",
 ];
 
 interface ScaleSliderProps {
@@ -45,7 +45,7 @@ export function ScaleSlider({ label, value, onChange, variant = "default" }: Sca
       <div className="flex items-center justify-between">
         <span className="text-sm font-medium text-zinc-300">{label}</span>
         <span className="text-xs text-zinc-500 w-6 text-right">
-          {value != null ? value : "—"}
+          {value != null ? value : "-"}
         </span>
       </div>
 

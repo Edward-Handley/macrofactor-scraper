@@ -243,21 +243,21 @@ export function Explorer() {
                 <input
                   value={filterText}
                   onChange={(e) => setFilterText(e.target.value)}
-                  placeholder="Filter rows…"
+                  placeholder="Filter rows..."
                   className="w-full bg-zinc-800 border border-zinc-700 rounded-lg pl-3 pr-8 py-2 text-sm text-zinc-200 placeholder:text-zinc-600"
                 />
                 {filterText && (
                   <button
                     onClick={() => setFilterText("")}
                     className="absolute right-2 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-300 text-xs"
-                  >✕</button>
+                  >x</button>
                 )}
               </div>
               <span className="text-xs text-zinc-500 shrink-0">
                 {filteredRows.length !== allRows.length
                   ? `${filteredRows.length} / ${allRows.length} rows`
                   : `${allRows.length} rows`}
-                {" · "}{visibleKeys.length} cols
+                {" - "}{visibleKeys.length} cols
               </span>
             </div>
 
@@ -353,7 +353,7 @@ export function Explorer() {
                         return (
                           <td key={k} className="py-1.5 px-3 text-zinc-300 whitespace-nowrap max-w-[200px] truncate">
                             {v == null
-                              ? <span className="text-zinc-700">—</span>
+                              ? <span className="text-zinc-700"> - </span>
                               : typeof v === "number"
                                 ? <span className="tabular-nums">{fmt(v, 2)}</span>
                                 : typeof v === "boolean"
@@ -379,14 +379,14 @@ export function Explorer() {
             {totalPages > 1 && (
               <div className="flex items-center justify-between px-4 py-3 border-t border-zinc-800 bg-zinc-900/50">
                 <span className="text-xs text-zinc-500">
-                  {page * PAGE_SIZE + 1}–{Math.min((page + 1) * PAGE_SIZE, sortedRows.length)} of {sortedRows.length}
+                  {page * PAGE_SIZE + 1}-{Math.min((page + 1) * PAGE_SIZE, sortedRows.length)} of {sortedRows.length}
                 </span>
                 <div className="flex items-center gap-1">
                   <button
                     onClick={() => setPage(0)}
                     disabled={page === 0}
                     className="px-2 py-1 rounded text-xs text-zinc-400 hover:text-zinc-100 disabled:opacity-30 transition-colors"
-                  >«</button>
+                  >{"<<"}</button>
                   <button
                     onClick={() => setPage(p => Math.max(0, p - 1))}
                     disabled={page === 0}
@@ -408,7 +408,7 @@ export function Explorer() {
                     onClick={() => setPage(totalPages - 1)}
                     disabled={page >= totalPages - 1}
                     className="px-2 py-1 rounded text-xs text-zinc-400 hover:text-zinc-100 disabled:opacity-30 transition-colors"
-                  >»</button>
+                  >{">>"}</button>
                 </div>
               </div>
             )}

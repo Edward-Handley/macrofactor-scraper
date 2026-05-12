@@ -1,5 +1,7 @@
 @import "tailwindcss";
 
+@custom-variant dark (&:where(.dark, .dark *));
+
 @theme {
   --color-brand: oklch(0.65 0.15 165);
   --color-brand-dim: oklch(0.55 0.12 165);
@@ -38,4 +40,81 @@
 }
 button, a, input, select {
   transition: all 0.1s ease;
+}
+
+html:not(.dark) {
+  color-scheme: light;
+  background: oklch(0.98 0 0);
+}
+
+.dark {
+  color-scheme: dark;
+}
+
+body {
+  background: oklch(0.98 0 0);
+  color: oklch(0.18 0 0);
+}
+
+.dark body {
+  background: oklch(0.13 0 0);
+  color: oklch(0.9 0 0);
+}
+
+html:not(.dark) .bg-zinc-950 { background-color: oklch(0.98 0 0) !important; }
+html:not(.dark) .bg-zinc-950\/80 { background-color: oklch(0.98 0 0 / 0.86) !important; }
+html:not(.dark) .bg-zinc-950\/95 { background-color: oklch(0.98 0 0 / 0.95) !important; }
+html:not(.dark) .bg-zinc-900 { background-color: white !important; }
+html:not(.dark) .bg-zinc-900\/70 { background-color: oklch(1 0 0 / 0.72) !important; }
+html:not(.dark) .bg-zinc-900\/80 { background-color: oklch(1 0 0 / 0.82) !important; }
+html:not(.dark) .bg-zinc-800 { background-color: oklch(0.94 0 0) !important; }
+html:not(.dark) .bg-zinc-800\/60 { background-color: oklch(0.94 0 0 / 0.72) !important; }
+html:not(.dark) .bg-zinc-800\/70 { background-color: oklch(0.94 0 0 / 0.76) !important; }
+html:not(.dark) .bg-zinc-700 { background-color: oklch(0.88 0 0) !important; }
+
+html:not(.dark) .border-zinc-900,
+html:not(.dark) .border-zinc-800,
+html:not(.dark) .border-zinc-700 { border-color: oklch(0.88 0 0) !important; }
+
+html:not(.dark) .divide-zinc-800 > :not([hidden]) ~ :not([hidden]) {
+  border-color: oklch(0.88 0 0) !important;
+}
+
+html:not(.dark) .text-zinc-50,
+html:not(.dark) .text-zinc-100,
+html:not(.dark) .text-zinc-200 { color: oklch(0.18 0 0) !important; }
+html:not(.dark) .text-zinc-300,
+html:not(.dark) .text-zinc-400 { color: oklch(0.36 0 0) !important; }
+html:not(.dark) .text-zinc-500,
+html:not(.dark) .text-zinc-600 { color: oklch(0.48 0 0) !important; }
+
+html:not(.dark) .hover\:bg-zinc-800:hover { background-color: oklch(0.94 0 0) !important; }
+html:not(.dark) .hover\:bg-zinc-700:hover { background-color: oklch(0.9 0 0) !important; }
+html:not(.dark) .hover\:text-zinc-100:hover,
+html:not(.dark) .hover\:text-zinc-200:hover,
+html:not(.dark) .hover\:text-zinc-300:hover { color: oklch(0.18 0 0) !important; }
+
+html:not(.dark) input,
+html:not(.dark) select,
+html:not(.dark) textarea {
+  color: oklch(0.18 0 0);
+}
+
+html:not(.dark) input::placeholder,
+html:not(.dark) textarea::placeholder {
+  color: oklch(0.62 0 0);
+}
+
+html:not(.dark) .recharts-cartesian-grid line {
+  stroke: oklch(0.9 0 0) !important;
+}
+
+html:not(.dark) .recharts-text {
+  fill: oklch(0.45 0 0) !important;
+}
+
+html:not(.dark) .recharts-tooltip-wrapper .recharts-default-tooltip {
+  background: white !important;
+  border-color: oklch(0.86 0 0) !important;
+  color: oklch(0.18 0 0) !important;
 }

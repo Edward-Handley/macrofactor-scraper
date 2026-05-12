@@ -429,7 +429,7 @@ export const FIELD_META: Record<SummaryField, FieldMeta> = {
 
 export const ALL_FIELDS: SummaryField[] = ["calories", "protein", "carbohydrates", "fat", "water", "weight", "steps", "active_energy"];
 
-// ─── Daily log ────────────────────────────────────────────────────────────────
+// - Daily log -
 
 export interface DailyLog {
   log_date: string;
@@ -473,7 +473,7 @@ export interface DailyLogListResponse {
   logs: DailyLog[];
 }
 
-// ─── Body measurements ────────────────────────────────────────────────────────
+// - Body measurements -
 
 export interface BodyMeasurement {
   measure_date: string;
@@ -495,7 +495,7 @@ export interface BodyMeasurementListResponse {
   measurements: BodyMeasurement[];
 }
 
-// ─── Cut phases ───────────────────────────────────────────────────────────────
+// - Cut phases -
 
 export interface CutPhase {
   id: number;
@@ -522,7 +522,7 @@ export interface CutPhaseListResponse {
   phases: CutPhase[];
 }
 
-// ─── Coach draft ──────────────────────────────────────────────────────────────
+// - Coach draft -
 
 export interface CoachDraftResponse {
   date: string;

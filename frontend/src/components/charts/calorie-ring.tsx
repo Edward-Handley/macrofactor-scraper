@@ -91,7 +91,7 @@ export function CalorieRing({ calories, protein, carbohydrates, fat, size = 260 
           <div className="flex gap-2 mt-2">
             {macros.map(({ key, value }) => (
               <span key={key} className="text-xs font-semibold text-zinc-300">
-                {key} {value != null ? Math.round(value) : "—"}g
+                {key} {value != null ? Math.round(value) : " - "}g
               </span>
             ))}
           </div>

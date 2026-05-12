@@ -128,7 +128,7 @@ export function Trends() {
             onChange={(e) => setRange(e.target.value, end)}
             className="text-xs bg-zinc-800 border border-zinc-700 rounded-lg px-2 py-1.5 text-zinc-300"
           />
-          <span className="text-zinc-600 text-xs">→</span>
+          <span className="text-zinc-600 text-xs">{"->"}</span>
           <input
             type="date"
             value={end}
@@ -204,11 +204,11 @@ export function Trends() {
                   <span className="text-xs text-zinc-500 font-normal ml-1">{meta.unit} avg</span>
                 </p>
                 <div className="flex items-center justify-between mt-1.5 text-[10px] text-zinc-600">
-                  <span>↓{fmt(stats.min, meta.decimals)}</span>
+                  <span>down{fmt(stats.min, meta.decimals)}</span>
                   <span className={trendNeutral ? "text-zinc-500" : trendUp ? "text-emerald-400" : "text-red-400"}>
-                    {trendNeutral ? "→" : trendUp ? "↑" : "↓"} {fmt(Math.abs(stats.slopePerWeek), meta.decimals)}/wk
+                    {trendNeutral ? "->" : trendUp ? "up" : "down"} {fmt(Math.abs(stats.slopePerWeek), meta.decimals)}/wk
                   </span>
-                  <span>↑{fmt(stats.max, meta.decimals)}</span>
+                  <span>up{fmt(stats.max, meta.decimals)}</span>
                 </div>
               </div>
             );

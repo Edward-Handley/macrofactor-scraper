@@ -36,7 +36,7 @@ function SuspiciousDay({ summary, onRepairSuccess }: { summary: DailySummary; on
             </p>
           </div>
         </div>
-        <span className="text-zinc-500 text-xs">{isSelected ? "▲" : "▼"}</span>
+        <span className="text-zinc-500 text-xs">{isSelected ? "up" : "down"}</span>
       </button>
 
       {isSelected && (
@@ -44,7 +44,7 @@ function SuspiciousDay({ summary, onRepairSuccess }: { summary: DailySummary; on
           {diagLoading && (
             <div className="flex items-center gap-2 text-xs text-zinc-500">
               <div className="w-3 h-3 rounded-full border border-zinc-500 border-t-transparent animate-spin" />
-              Loading diagnostics…
+              Loading diagnostics...
             </div>
           )}
           {suspicious.map((item) => (
@@ -152,7 +152,7 @@ export function DataHealth() {
       {/* Metric catalog */}
       <Card>
         <p className="text-xs font-semibold text-zinc-500 uppercase tracking-wide mb-3">
-          Metric catalog — {catalog?.count ?? 0} metrics
+          Metric catalog  -  {catalog?.count ?? 0} metrics
         </p>
         <div className="overflow-x-auto">
           <table className="w-full text-xs">
@@ -169,7 +169,7 @@ export function DataHealth() {
               {catalog?.metrics.map((m) => (
                 <tr key={`${m.name}-${m.units}`} className="border-t border-zinc-800/60 hover:bg-zinc-800/20 transition-colors">
                   <td className="py-2 pr-3 text-zinc-200 font-medium">{m.name}</td>
-                  <td className="py-2 px-2 text-zinc-500">{m.units ?? "—"}</td>
+                  <td className="py-2 px-2 text-zinc-500">{m.units ?? " - "}</td>
                   <td className="py-2 px-2 text-right text-zinc-400 tabular-nums">{m.count.toLocaleString()}</td>
                   <td className="py-2 px-2">
                     <div className="flex flex-wrap gap-1">

@@ -15,7 +15,7 @@ function ActivePhaseBadge() {
   const week = Math.floor(daysSince / 7) + 1;
   return (
     <span className="hidden sm:flex text-[10px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-400">
-      {active.name} · W{week} D{daysSince}
+      {active.name} - W{week} D{daysSince}
     </span>
   );
 }
@@ -57,7 +57,6 @@ function Topbar() {
 export function AppShell() {
   return (
     <div className="flex h-screen flex-col md:flex-row overflow-hidden bg-zinc-950">
-      {/* Sidebar — desktop */}
       <aside className="hidden md:flex flex-col w-52 border-r border-zinc-800 shrink-0 bg-zinc-950">
         <div className="flex flex-col gap-1 px-4 py-4 border-b border-zinc-800">
           <div className="flex items-center gap-2">
@@ -83,9 +82,7 @@ export function AppShell() {
         </div>
       </aside>
 
-      {/* Main content */}
       <div className="flex-1 flex flex-col min-h-0">
-        {/* Topbar — mobile only */}
         <div className="md:hidden">
           <Topbar />
         </div>
@@ -94,7 +91,6 @@ export function AppShell() {
           <Outlet />
         </main>
 
-        {/* Bottom nav — mobile only */}
         <div className="md:hidden">
           <BottomNav />
         </div>

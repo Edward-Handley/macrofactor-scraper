@@ -102,7 +102,7 @@ export function CalendarHeatmap({ data, field = "calories" }: CalendarHeatmapPro
                     onClick={() => hasData && navigate(`/data-health?date=${date}`)}
                     title={
                       hasData
-                        ? `${date}: ${Math.round(value ?? 0)} kcal — ${BUCKET_LABELS[bucket!]}`
+                        ? `${date}: ${Math.round(value ?? 0)} kcal  -  ${BUCKET_LABELS[bucket!]}`
                         : isFuture
                         ? date
                         : `${date}: no data`

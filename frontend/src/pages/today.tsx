@@ -26,7 +26,7 @@ function avg(vals: (number | null)[]): number | null {
 function Delta({ value, reversed = false, decimals = 0, unit = "" }: {
   value: number | null; reversed?: boolean; decimals?: number; unit?: string;
 }) {
-  if (value == null || Math.abs(value) < 0.01) return <span className="text-zinc-600 text-xs">—</span>;
+  if (value == null || Math.abs(value) < 0.01) return <span className="text-zinc-600 text-xs"> - </span>;
   const up = value > 0;
   const good = reversed ? !up : up;
   return (
@@ -173,7 +173,7 @@ export function Today() {
           <div className="flex items-center gap-3">
             <span className="text-sm font-semibold text-emerald-400">{activePhase.name}</span>
             <span className="text-xs text-zinc-400">
-              Week {cutBannerWeek} · Day {cutBannerDay}
+              Week {cutBannerWeek} - Day {cutBannerDay}
             </span>
           </div>
           {activePhase.target_calories && (
@@ -184,7 +184,7 @@ export function Today() {
         </Link>
       )}
 
-      {/* Hero — ring + macros */}
+      {/* Hero  -  ring + macros */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <Card className="flex items-center justify-center py-6">
           <CalorieRing
@@ -296,7 +296,7 @@ export function Today() {
       {/* 30-day calorie heatmap */}
       <Card>
         <p className="text-xs font-semibold text-zinc-500 uppercase tracking-wide mb-3">
-          Calorie consistency — {rangeDays} days
+          Calorie consistency  -  {rangeDays} days
         </p>
         <CalendarHeatmap data={heatmapData} />
       </Card>
@@ -322,7 +322,7 @@ export function Today() {
                 return (
                   <tr key={d.date} className={`border-t border-zinc-800/60 hover:bg-zinc-800/30 transition-colors ${isToday ? "bg-zinc-800/20" : ""}`}>
                     <td className={`py-2 pr-3 ${isToday ? "text-emerald-400 font-semibold" : "text-zinc-400"}`}>
-                      {formatShortDate(d.date)}{isToday ? " ·" : ""}
+                      {formatShortDate(d.date)}{isToday ? " -" : ""}
                     </td>
                     <td className="py-2 px-2 text-right font-semibold text-zinc-100 tabular-nums">{fmt(d.calories, 0)}</td>
                     <td className="py-2 px-2 text-right text-zinc-300 tabular-nums">{fmt(d.protein, 0)}g</td>

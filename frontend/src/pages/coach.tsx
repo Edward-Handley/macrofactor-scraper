@@ -35,7 +35,7 @@ export function Coach() {
         <div>
           <h1 className="text-2xl font-black text-zinc-50">Coach Prompt</h1>
           <p className="text-sm text-zinc-500 mt-0.5">
-            Build your daily check-in for AI coaching — copy and paste.
+            Build your daily check-in for AI coaching  -  copy and paste.
           </p>
         </div>
         <div className="flex items-center gap-2 shrink-0">
@@ -80,7 +80,7 @@ export function Coach() {
           onChange={(e) => setText(e.target.value)}
           rows={28}
           className="w-full bg-zinc-900 border border-zinc-800 rounded-2xl px-4 py-3 text-sm text-zinc-200 font-mono leading-relaxed focus:outline-none focus:ring-2 focus:ring-violet-500 resize-y"
-          placeholder="No data available for this date yet — fill in your morning and evening logs first."
+          placeholder="No data available for this date yet  -  fill in your morning and evening logs first."
         />
       )}
 

@@ -36,7 +36,7 @@ function PhaseCard({ phase, onEdit }: { phase: CutPhase; onEdit: (p: CutPhase) =
             )}
           </div>
           <p className="text-xs text-zinc-500 mt-0.5">
-            {phase.start_date}{phase.end_date ? ` → ${phase.end_date}` : " → ongoing"}
+            {phase.start_date}{phase.end_date ? ` -> ${phase.end_date}` : " -> ongoing"}
           </p>
         </div>
         <button
@@ -50,17 +50,17 @@ function PhaseCard({ phase, onEdit }: { phase: CutPhase; onEdit: (p: CutPhase) =
       {active && day !== null && (
         <div className="flex gap-3 text-xs text-zinc-400">
           <span>Week <span className="font-semibold text-zinc-200">{week}</span></span>
-          <span>·</span>
+          <span>-</span>
           <span>Day <span className="font-semibold text-zinc-200">{day}</span></span>
           {phase.target_calories && (
             <>
-              <span>·</span>
+              <span>-</span>
               <span>Target <span className="font-semibold text-zinc-200">{phase.target_calories} kcal</span></span>
             </>
           )}
           {phase.target_weight_kg && (
             <>
-              <span>·</span>
+              <span>-</span>
               <span>Goal <span className="font-semibold text-zinc-200">{phase.target_weight_kg} kg</span></span>
             </>
           )}
@@ -180,7 +180,7 @@ function PhaseForm({
           disabled={isLoading}
           className="px-4 py-2 rounded-xl text-sm font-semibold bg-emerald-600 hover:bg-emerald-500 text-white disabled:opacity-50 transition-colors"
         >
-          {isLoading ? "Saving…" : "Save"}
+          {isLoading ? "Saving..." : "Save"}
         </button>
       </div>
     </form>
@@ -224,7 +224,7 @@ export function CutPhases() {
           <h1 className="text-2xl font-black text-zinc-50">Cut Phases</h1>
           {active && (
             <p className="text-sm text-zinc-500 mt-0.5">
-              {active.name} · Week {weekOf(active.start_date)} · Day {daysSince(active.start_date)}
+              {active.name} - Week {weekOf(active.start_date)} - Day {daysSince(active.start_date)}
             </p>
           )}
         </div>
@@ -265,7 +265,7 @@ export function CutPhases() {
 
       {phases.length === 0 && !showCreate && (
         <div className="text-center py-12 text-zinc-600 text-sm">
-          No phases yet — create one to start tracking your cut.
+          No phases yet  -  create one to start tracking your cut.
         </div>
       )}
 
