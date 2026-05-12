@@ -11,6 +11,20 @@ export function compact(value: number): string {
   return String(Math.round(value));
 }
 
+export function formatMinutesAsHoursMinutes(value: number | null | undefined): string {
+  if (value == null) return "-";
+  const totalMinutes = Math.max(0, Math.round(value));
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  if (hours === 0) return `${minutes}m`;
+  if (minutes === 0) return `${hours}h`;
+  return `${hours}h ${minutes}m`;
+}
+
+export function minutesToDecimalHours(value: number): number {
+  return Math.round((value / 60) * 10) / 10;
+}
+
 export function isoDate(d: Date = new Date()): string {
   return d.toISOString().slice(0, 10);
 }

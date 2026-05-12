@@ -1,12 +1,14 @@
 import { useMemo } from "react";
 import { Link } from "react-router-dom";
+import { useQuery } from "@tanstack/react-query";
 import { useDashboardSummary, usePreferences } from "../hooks/use-dashboard";
 import { useCutPhases } from "../hooks/use-daily-log";
 import { CalorieRing } from "../components/charts/calorie-ring";
 import { MacroStack } from "../components/charts/macro-stack";
 import { Sparkline } from "../components/charts/sparkline";
 import { CalendarHeatmap } from "../components/charts/calendar-heatmap";
-import { fmt, isoDate, offsetDate, formatShortDate, deltaArrow } from "../lib/format";
+import { api } from "../lib/api";
+import { fmt, formatMinutesAsHoursMinutes, isoDate, offsetDate, formatShortDate, deltaArrow } from "../lib/format";
 import { FIELD_META } from "../lib/types";
 import type { DailySummary } from "../lib/types";
 
@@ -66,6 +68,19 @@ function StatCard({ label, value, unit, delta, deltaReversed = false, deltaDecim
   );
 }
 
+function GarminMetricCard({ label, value, unit = "" }: { label: string; value: string; unit?: string }) {
+  return (
+    <Card className="flex flex-col gap-2 min-h-24">
+      <span className="text-xs font-semibold text-zinc-500 uppercase tracking-wide">{label}</span>
+      <div className="mt-auto flex items-end gap-1.5">
+        <span className="text-2xl font-black text-zinc-50 tabular-nums leading-none">{value}</span>
+        {unit && <span className="text-sm text-zinc-500 mb-0.5">{unit}</span>}
+      </div>
+      <span className="text-[10px] font-semibold uppercase tracking-wide text-zinc-600">Garmin</span>
+    </Card>
+  );
+}
+
 export function Today() {
   const end = isoDate();
   const start = offsetDate(-89);
@@ -73,6 +88,11 @@ export function Today() {
   const { data: prefs } = usePreferences();
   const { data: cutData } = useCutPhases();
   const TODAY = isoDate();
+  const { data: garminToday } = useQuery({
+    queryKey: ["garmin-values", TODAY],
+    queryFn: () => api.garmin.values(TODAY),
+    staleTime: 300_000,
+  });
   const activePhase = cutData?.phases.find((p) => !p.end_date || p.end_date >= TODAY) ?? null;
   const cutBannerDay = activePhase
     ? Math.floor((new Date().getTime() - new Date(activePhase.start_date).getTime()) / 86_400_000) + 1
@@ -135,6 +155,12 @@ export function Today() {
 
   const rangeDays = prefs?.preferred_range_days ?? 30;
   const heatmapData = summaries.slice(-rangeDays);
+  const hasGarminRecovery = Boolean(
+    garminToday?.sleep_minutes != null ||
+    garminToday?.sleep_score != null ||
+    garminToday?.resting_heart_rate != null ||
+    garminToday?.hrv_overnight != null
+  );
 
   if (isLoading) return (
     <div className="p-6 flex items-center justify-center h-64">
@@ -259,6 +285,29 @@ export function Today() {
           field="active_energy"
         />
       </div>
+
+      {hasGarminRecovery && (
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          <GarminMetricCard
+            label="Sleep"
+            value={formatMinutesAsHoursMinutes(garminToday?.sleep_minutes)}
+          />
+          <GarminMetricCard
+            label="Sleep Score"
+            value={fmt(garminToday?.sleep_score, 0)}
+          />
+          <GarminMetricCard
+            label="Resting HR"
+            value={fmt(garminToday?.resting_heart_rate, 0)}
+            unit="bpm"
+          />
+          <GarminMetricCard
+            label="Overnight HRV"
+            value={fmt(garminToday?.hrv_overnight, 0)}
+            unit="ms"
+          />
+        </div>
+      )}
 
       {/* Averages strip */}
       <Card>

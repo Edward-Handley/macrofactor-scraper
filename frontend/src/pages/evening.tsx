@@ -6,7 +6,7 @@ import { ScaleSlider } from "../components/inputs/scale-slider";
 import { useDailyLog, useUpsertDailyLog } from "../hooks/use-daily-log";
 import { useDashboardSummary } from "../hooks/use-dashboard";
 import { api } from "../lib/api";
-import { isoDate, offsetDate, fmt } from "../lib/format";
+import { formatMinutesAsHoursMinutes, isoDate, minutesToDecimalHours, offsetDate, fmt } from "../lib/format";
 import type { DailyLogUpsert } from "../lib/types";
 
 const TODAY = isoDate(new Date());
@@ -278,12 +278,17 @@ export function Evening() {
       <Section title="Last night's sleep" defaultOpen={false}>
         {garminToday?.sleep_minutes != null && sleepHours == null && (
           <div className="flex items-center justify-between bg-zinc-800/60 rounded-xl px-3 py-2 text-xs">
-            <span className="text-zinc-400">Garmin: {(garminToday.sleep_minutes / 60).toFixed(1)} hrs</span>
-            <button type="button" onClick={() => markDirty(setSleepHours)(parseFloat((garminToday.sleep_minutes! / 60).toFixed(1)))}
+            <span className="text-zinc-400">Garmin: {formatMinutesAsHoursMinutes(garminToday.sleep_minutes)}</span>
+            <button type="button" onClick={() => markDirty(setSleepHours)(minutesToDecimalHours(garminToday.sleep_minutes!))}
               className="text-emerald-400 hover:text-emerald-300 font-medium">Use</button>
           </div>
         )}
         <NumInput label="Sleep hours" value={sleepHours} onChange={markDirty(setSleepHours)} unit="hrs" step={0.5} max={24} />
+        {sleepHours != null && (
+          <p className="text-xs text-zinc-500 text-right">
+            {formatMinutesAsHoursMinutes(sleepHours * 60)}
+          </p>
+        )}
         <ScaleSlider label="Sleep quality" value={sleepQuality} onChange={markDirty(setSleepQuality)} variant="sleep_quality" />
         {garminToday?.sleep_score != null && sleepScore == null && (
           <div className="flex items-center justify-between bg-zinc-800/60 rounded-xl px-3 py-2 text-xs">
