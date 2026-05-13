@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { useDashboardSummary, usePreferences } from "../hooks/use-dashboard";
 import { useCutPhases } from "../hooks/use-daily-log";
@@ -8,9 +8,14 @@ import { MacroStack } from "../components/charts/macro-stack";
 import { Sparkline } from "../components/charts/sparkline";
 import { CalendarHeatmap } from "../components/charts/calendar-heatmap";
 import { api } from "../lib/api";
-import { fmt, formatMinutesAsHoursMinutes, isoDate, offsetDate, formatShortDate, deltaArrow } from "../lib/format";
+import { fmt, formatMinutesAsHoursMinutes, isoDate, formatShortDate, formatDdMmYyyy, deltaArrow } from "../lib/format";
 import { FIELD_META } from "../lib/types";
 import type { DailySummary } from "../lib/types";
+
+function addDays(iso: string, n: number): string {
+  const [y, m, d] = iso.split("-").map(Number);
+  return new Date(Date.UTC(y, m - 1, d + n)).toISOString().slice(0, 10);
+}
 
 function Card({ children, className = "" }: { children: React.ReactNode; className?: string }) {
   return (
@@ -82,15 +87,22 @@ function GarminMetricCard({ label, value, unit = "" }: { label: string; value: s
 }
 
 export function Today() {
-  const end = isoDate();
-  const start = offsetDate(-89);
+  const [searchParams, setSearchParams] = useSearchParams();
+  const TODAY = isoDate();
+  const forDate = (() => {
+    const p = searchParams.get("date");
+    if (p && /^\d{4}-\d{2}-\d{2}$/.test(p) && p <= TODAY) return p;
+    return TODAY;
+  })();
+  const end = forDate;
+  const start = addDays(forDate, -89);
+
   const { data: summary, isLoading, error } = useDashboardSummary(start, end);
   const { data: prefs } = usePreferences();
   const { data: cutData } = useCutPhases();
-  const TODAY = isoDate();
   const { data: garminToday } = useQuery({
-    queryKey: ["garmin-values", TODAY],
-    queryFn: () => api.garmin.values(TODAY),
+    queryKey: ["garmin-values", forDate],
+    queryFn: () => api.garmin.values(forDate),
     staleTime: 300_000,
   });
   const activePhase = cutData?.phases.find((p) => !p.end_date || p.end_date >= TODAY) ?? null;
@@ -99,8 +111,13 @@ export function Today() {
     : null;
   const cutBannerWeek = cutBannerDay !== null ? Math.floor(cutBannerDay / 7) + 1 : null;
 
+  function goDate(iso: string) {
+    if (iso >= TODAY) setSearchParams({});
+    else setSearchParams({ date: iso });
+  }
+
   const summaries = summary?.summaries ?? [];
-  const today = summaries.find((d) => d.date === isoDate()) ?? summaries.at(-1) ?? null;
+  const today = summaries.find((d) => d.date === forDate) ?? summaries.at(-1) ?? null;
   const yesterday = summaries.at(-2) ?? null;
   const recent7 = summaries.slice(-7);
   const prev7 = summaries.slice(-14, -7);
@@ -175,19 +192,40 @@ export function Today() {
   return (
     <div className="p-4 md:p-6 space-y-6 max-w-4xl mx-auto">
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-black text-zinc-50">Today</h1>
+          <h1 className="text-2xl font-black text-zinc-50">
+            {forDate === TODAY ? "Today" : formatDdMmYyyy(forDate)}
+          </h1>
           <p className="text-sm text-zinc-500 mt-0.5">
             {today ? formatShortDate(today.date) : "No data yet"}
           </p>
         </div>
-        {calorieVsYesterday != null && (
-          <div className="text-right">
-            <p className="text-[10px] text-zinc-600 uppercase tracking-wide">vs yesterday</p>
-            <Delta value={calorieVsYesterday} decimals={0} unit=" kcal" reversed={false} />
-          </div>
-        )}
+        <div className="flex items-center gap-2">
+          {calorieVsYesterday != null && (
+            <div className="text-right mr-2">
+              <p className="text-[10px] text-zinc-600 uppercase tracking-wide">vs yesterday</p>
+              <Delta value={calorieVsYesterday} decimals={0} unit=" kcal" reversed={false} />
+            </div>
+          )}
+          <button
+            onClick={() => goDate(addDays(forDate, -1))}
+            className="p-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-400 hover:text-zinc-100 transition-colors text-sm"
+            title="Previous day"
+          >&#8592;</button>
+          <button
+            onClick={() => goDate(addDays(forDate, 1))}
+            disabled={forDate >= TODAY}
+            className="p-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-400 hover:text-zinc-100 transition-colors text-sm disabled:opacity-30 disabled:cursor-not-allowed"
+            title="Next day"
+          >&#8594;</button>
+          {forDate !== TODAY && (
+            <button
+              onClick={() => goDate(TODAY)}
+              className="px-2 py-1 rounded-lg bg-emerald-800/40 hover:bg-emerald-700/40 text-emerald-400 text-xs font-semibold transition-colors"
+            >Today</button>
+          )}
+        </div>
       </div>
 
       {/* Cut phase banner */}
@@ -367,11 +405,11 @@ export function Today() {
             </thead>
             <tbody>
               {[...recent14].reverse().map((d) => {
-                const isToday = d.date === isoDate();
+                const isSelected = d.date === forDate;
                 return (
-                  <tr key={d.date} className={`border-t border-zinc-800/60 hover:bg-zinc-800/30 transition-colors ${isToday ? "bg-zinc-800/20" : ""}`}>
-                    <td className={`py-2 pr-3 ${isToday ? "text-emerald-400 font-semibold" : "text-zinc-400"}`}>
-                      {formatShortDate(d.date)}{isToday ? " -" : ""}
+                  <tr key={d.date} className={`border-t border-zinc-800/60 hover:bg-zinc-800/30 transition-colors ${isSelected ? "bg-zinc-800/20" : ""}`}>
+                    <td className={`py-2 pr-3 ${isSelected ? "text-emerald-400 font-semibold" : "text-zinc-400"}`}>
+                      {formatShortDate(d.date)}{isSelected ? " -" : ""}
                     </td>
                     <td className="py-2 px-2 text-right font-semibold text-zinc-100 tabular-nums">{fmt(d.calories, 0)}</td>
                     <td className="py-2 px-2 text-right text-zinc-300 tabular-nums">{fmt(d.protein, 0)}g</td>

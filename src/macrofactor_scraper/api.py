@@ -330,6 +330,36 @@ async def metric_date_diagnostics(
     return service.metric_date_diagnostics(target_date)
 
 
+@app.get("/v1/diagnostics/weight/{target_date}", dependencies=[Depends(require_private_access)])
+async def weight_diagnostics(
+    target_date: date,
+    service: HealthAutoExportService = Depends(get_health_export_service),
+) -> dict:
+    """Return every weight row for a date with source/timestamp/quantity for debugging."""
+    with service._connect() as conn:
+        rows = conn.execute(
+            """SELECT id, metric_name, source, timestamp, record_date, quantity, units
+               FROM health_records
+               WHERE record_date = ? AND metric_name IN ('weight','body_mass','body_weight','weight_body_mass')
+               ORDER BY timestamp, id""",
+            (target_date.isoformat(),),
+        ).fetchall()
+    return {
+        "date": target_date.isoformat(),
+        "rows": [
+            {
+                "id": r["id"],
+                "metric_name": r["metric_name"],
+                "source": r["source"],
+                "timestamp": r["timestamp"],
+                "quantity": float(r["quantity"]),
+                "units": r["units"],
+            }
+            for r in rows
+        ],
+    }
+
+
 @app.get("/v1/workouts", response_model=WorkoutListResponse, dependencies=[Depends(require_private_access)])
 async def workouts(
     start: date | None = None,
@@ -620,15 +650,11 @@ async def garmin_status() -> dict:
     }
 
 
-@app.post("/v1/garmin/sync")
+@app.post("/v1/garmin/sync", dependencies=[Depends(require_private_access)])
 async def garmin_manual_sync(
     sync_date: date | None = None,
-    x_api_key: str | None = Header(default=None),
-    settings: Settings = Depends(get_settings),
     service: HealthAutoExportService = Depends(get_health_export_service),
 ) -> dict:
-    if not _valid_api_key(x_api_key, settings):
-        raise HTTPException(status_code=401, detail="Ingest API key required")
     garmin = getattr(app.state, "garmin_service", None)
     if garmin is None:
         raise HTTPException(status_code=503, detail="Garmin not configured — set GARMIN_USERNAME and GARMIN_PASSWORD")
@@ -645,14 +671,10 @@ async def garmin_manual_sync(
     return {"synced": True, "changed": changed if isinstance(changed, dict) else {}}
 
 
-@app.get("/v1/garmin/debug/{for_date}")
+@app.get("/v1/garmin/debug/{for_date}", dependencies=[Depends(require_private_access)])
 async def garmin_debug(
     for_date: date,
-    x_api_key: str | None = Header(default=None),
-    settings: Settings = Depends(get_settings),
 ) -> dict:
-    if not _valid_api_key(x_api_key, settings):
-        raise HTTPException(status_code=401, detail="Ingest API key required")
     garmin = getattr(app.state, "garmin_service", None)
     if garmin is None:
         raise HTTPException(status_code=503, detail="Garmin not configured - set GARMIN_USERNAME and GARMIN_PASSWORD")

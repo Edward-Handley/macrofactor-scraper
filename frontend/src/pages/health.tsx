@@ -180,6 +180,7 @@ export function Health() {
       qc.invalidateQueries({ queryKey: ["garmin-values", selectedDate] });
       qc.invalidateQueries({ queryKey: ["garmin-series"] });
       qc.invalidateQueries({ queryKey: ["garmin-status"] });
+      qc.invalidateQueries({ queryKey: ["dashboard-summary"] });
     },
   });
 

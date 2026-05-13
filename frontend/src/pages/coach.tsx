@@ -7,7 +7,7 @@ const TODAY = isoDate();
 
 export function Coach() {
   const [forDate, setForDate] = useState(TODAY);
-  const { data, isLoading, refetch, isFetching } = useCoachDraft(forDate);
+  const { data, isLoading, error, refetch, isFetching } = useCoachDraft(forDate);
 
   const [text, setText] = useState("");
   const [copied, setCopied] = useState(false);
@@ -69,7 +69,11 @@ export function Coach() {
       </div>
 
       {/* Prompt textarea */}
-      {isLoading ? (
+      {error ? (
+        <div className="flex items-center gap-2 px-4 py-3 rounded-xl bg-red-900/30 border border-red-800/50 text-red-300 text-sm">
+          Failed to load coach data — {(error as Error).message ?? "check connection"}
+        </div>
+      ) : isLoading ? (
         <div className="flex items-center justify-center h-64">
           <div className="w-8 h-8 rounded-full border-2 border-violet-500 border-t-transparent animate-spin" />
         </div>

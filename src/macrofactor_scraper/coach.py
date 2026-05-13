@@ -8,7 +8,7 @@ from typing import Any
 
 @dataclass
 class CoachData:
-    checkin_date: str
+    checkin_date: date
     cut_phase: str | None = None
     week_number: int | None = None
     # Nutrition (yesterday)
@@ -78,7 +78,7 @@ def build_prompt(data: CoachData) -> str:
         phase_line = f" | {data.cut_phase}"
         if data.week_number:
             phase_line += f" Week {data.week_number}"
-    lines.append(f"## Daily Check-In — {data.checkin_date}{phase_line}")
+    lines.append(f"## Daily Check-In — {data.checkin_date.strftime('%d/%m/%Y')}{phase_line}")
     lines.append("")
 
     # Body / weight
@@ -288,7 +288,7 @@ def build_coach_data(service: Any, checkin_date: date) -> CoachData:
     phase = service.get_active_cut_phase()
 
     data = CoachData(
-        checkin_date=checkin_date.isoformat(),
+        checkin_date=checkin_date,
         cut_phase=phase["name"] if phase else (log.get("cut_phase") if log else None),
         week_number=log.get("week_number") if log else None,
         calories=yest.calories if yest else None,

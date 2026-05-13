@@ -1,4 +1,4 @@
-import { NavLink } from "react-router-dom";
+import { NavLink, useSearchParams } from "react-router-dom";
 import { Activity, BarChart2, BotMessageSquare, Database, Dumbbell, HeartPulse, Moon, Ruler, Search, Settings, Sun, Scissors } from "lucide-react";
 import { cn } from "../../lib/utils";
 
@@ -37,10 +37,13 @@ function NavItem({ to, label, Icon, end = false }: { to: string; label: string; 
 
 function LogNavItem() {
   const evening = isEvening();
-  const to = evening ? "/evening" : "/morning";
+  const base = evening ? "/evening" : "/morning";
   const label = evening ? "Evening" : "Morning";
   const Icon = evening ? Moon : Sun;
   const activeColor = evening ? "text-indigo-400 bg-indigo-500/10" : "text-amber-400 bg-amber-500/10";
+  const [searchParams] = useSearchParams();
+  const dateParam = searchParams.get("date");
+  const to = dateParam ? `${base}?date=${dateParam}` : base;
 
   return (
     <NavLink

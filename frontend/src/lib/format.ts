@@ -36,21 +36,26 @@ export function offsetDate(offsetDays: number, from: Date = new Date()): string 
 }
 
 export function formatShortDate(iso: string): string {
-  const d = new Date(iso + "T00:00:00");
-  return d.toLocaleDateString("en", { month: "short", day: "numeric" });
+  const d = new Date(iso + "T00:00:00Z");
+  return d.toLocaleDateString("en", { month: "short", day: "numeric", timeZone: "UTC" });
 }
 
 export function formatMonthDay(iso: string): string {
-  const d = new Date(iso + "T00:00:00");
-  return d.toLocaleDateString("en", { month: "short", day: "numeric" });
+  const d = new Date(iso + "T00:00:00Z");
+  return d.toLocaleDateString("en", { month: "short", day: "numeric", timeZone: "UTC" });
+}
+
+export function formatDdMmYyyy(iso: string): string {
+  const [y, m, dd] = iso.split("-");
+  return `${dd}/${m}/${y}`;
 }
 
 export function dayOfWeek(iso: string): number {
-  return new Date(iso + "T00:00:00").getDay();
+  return new Date(iso + "T00:00:00Z").getDay();
 }
 
 export function weekNumber(iso: string): number {
-  const d = new Date(iso + "T00:00:00");
+  const d = new Date(iso + "T00:00:00Z");
   const start = new Date(d.getFullYear(), 0, 1);
   return Math.ceil(((d.getTime() - start.getTime()) / 86400000 + start.getDay() + 1) / 7);
 }

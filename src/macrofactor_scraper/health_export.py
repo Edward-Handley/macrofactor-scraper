@@ -61,8 +61,13 @@ from macrofactor_scraper.models import (
 
 
 SUMMARY_FIELDS = ("calories", "protein", "carbohydrates", "fat", "water", "weight", "steps", "active_energy")
-REPLACEMENT_SUMMARY_KEYS = {"weight"}
+REPLACEMENT_SUMMARY_KEYS = {"weight", "steps"}
 RUNNING_TOTAL_SUMMARY_KEYS = {"calories", "protein", "carbohydrates", "fat", "water", "active_energy"}
+# Source priority for replacement metrics: first match wins; unlisted sources fall back to latest-timestamp.
+SOURCE_PRIORITY: dict[str, tuple[str, ...]] = {
+    "weight": ("MacroFactor",),
+    "steps": ("Garmin",),
+}
 STRONG_REQUIRED_COLUMNS = {
     "Date",
     "Workout Name",
@@ -658,23 +663,27 @@ class HealthAutoExportService:
             day_totals = summaries.setdefault(day, {})
             day_totals[key] = day_totals.get(key, 0.0) + value
 
-        # Collapse replacement metrics: one latest row per day wins.
-        latest_weight_rows: dict[date, sqlite3.Row] = {}
-        for (day, key, _source), row in replacement_rows.items():
-            if key == "weight":
-                current = latest_weight_rows.get(day)
-                if current is None or _metric_row_sort_key(row) > _metric_row_sort_key(current):
-                    latest_weight_rows[day] = row
-            else:
-                quantity = _summary_quantity(key, row["units"], float(row["quantity"]))
-                if quantity is not None:
-                    day_totals = summaries.setdefault(day, {})
-                    day_totals[key] = day_totals.get(key, 0.0) + quantity
+        # Collapse replacement metrics with source priority.
+        # Group (day, key) -> {source: best_row_for_that_source}
+        source_best: dict[tuple[date, str], dict[str, sqlite3.Row]] = {}
+        for (day, key, source), row in replacement_rows.items():
+            s = source or ""
+            inner = source_best.setdefault((day, key), {})
+            if s not in inner or _metric_row_sort_key(row) > _metric_row_sort_key(inner[s]):
+                inner[s] = row
 
-        for day, row in latest_weight_rows.items():
-            quantity = _summary_quantity("weight", row["units"], float(row["quantity"]))
+        for (day, key), by_source in source_best.items():
+            priority = SOURCE_PRIORITY.get(key, ())
+            chosen_row: sqlite3.Row | None = None
+            for prio_source in priority:
+                if prio_source in by_source:
+                    chosen_row = by_source[prio_source]
+                    break
+            if chosen_row is None:
+                chosen_row = max(by_source.values(), key=_metric_row_sort_key)
+            quantity = _summary_quantity(key, chosen_row["units"], float(chosen_row["quantity"]))
             if quantity is not None:
-                summaries.setdefault(day, {})["weight"] = quantity
+                summaries.setdefault(day, {})[key] = quantity
 
         items = [DailySummary(date=day, **values) for day, values in sorted(summaries.items())]
         return items
@@ -2102,6 +2111,7 @@ def _summary_key(metric_name: str) -> str | None:
         "weight": "weight",
         "step_count": "steps",
         "steps": "steps",
+        "garmin_steps": "steps",
         "active_energy": "active_energy",
         "active_energy_burned": "active_energy",
     }

@@ -1,16 +1,20 @@
 import { useEffect, useRef, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { CheckCircle, ChevronDown, ChevronUp, Moon } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { ScaleSlider } from "../components/inputs/scale-slider";
 import { useDailyLog, useUpsertDailyLog } from "../hooks/use-daily-log";
 import { useDashboardSummary } from "../hooks/use-dashboard";
 import { api } from "../lib/api";
-import { formatMinutesAsHoursMinutes, isoDate, minutesToDecimalHours, offsetDate, fmt } from "../lib/format";
+import { formatMinutesAsHoursMinutes, isoDate, minutesToDecimalHours, fmt, formatDdMmYyyy } from "../lib/format";
 import type { DailyLogUpsert } from "../lib/types";
 
 const TODAY = isoDate(new Date());
-const YESTERDAY = offsetDate(-1);
+
+function addDays(iso: string, n: number): string {
+  const [y, m, d] = iso.split("-").map(Number);
+  return new Date(Date.UTC(y, m - 1, d + n)).toISOString().slice(0, 10);
+}
 
 const TRAINING_TYPES = [
   { value: "upper", label: "Upper" },
@@ -80,18 +84,32 @@ function MacroRef({ summary }: { summary?: { calories: number | null; protein: n
 
 export function Evening() {
   const navigate = useNavigate();
-  const { data: existing } = useDailyLog(TODAY);
-  const upsert = useUpsertDailyLog(TODAY);
+  const [searchParams, setSearchParams] = useSearchParams();
+  const forDate = (() => {
+    const p = searchParams.get("date");
+    if (p && /^\d{4}-\d{2}-\d{2}$/.test(p) && p <= TODAY) return p;
+    return TODAY;
+  })();
+  const isPast = forDate < TODAY;
+  const YESTERDAY = addDays(forDate, -1);
+
+  const { data: existing } = useDailyLog(forDate);
+  const upsert = useUpsertDailyLog(forDate);
   const dirtyRef = useRef(false);
 
   const { data: yestSummary } = useDashboardSummary(YESTERDAY, YESTERDAY);
   const yestData = yestSummary?.summaries?.[0];
 
   const { data: garminToday } = useQuery({
-    queryKey: ["garmin-values", TODAY],
-    queryFn: () => api.garmin.values(TODAY),
+    queryKey: ["garmin-values", forDate],
+    queryFn: () => api.garmin.values(forDate),
     staleTime: 300_000,
   });
+
+  function goDate(iso: string) {
+    if (iso >= TODAY) setSearchParams({});
+    else setSearchParams({ date: iso });
+  }
 
   const [pmEnergy, setPmEnergy] = useState<number | null>(null);
   const [motivation, setMotivation] = useState<number | null>(null);
@@ -182,7 +200,7 @@ export function Evening() {
         <CheckCircle size={56} className="text-emerald-400" />
         <div className="text-center">
           <p className="text-lg font-semibold text-zinc-100">Evening logged.</p>
-          <p className="text-sm text-zinc-500 mt-1">Day complete.</p>
+          <p className="text-sm text-zinc-500 mt-1">{formatDdMmYyyy(forDate)}</p>
         </div>
         <button
           onClick={() => navigate("/")}
@@ -199,15 +217,26 @@ export function Evening() {
 
   return (
     <div className="max-w-lg mx-auto p-4 flex flex-col gap-4 pb-28">
-      <div className="flex items-center gap-3 pt-2">
-        <Moon size={20} className="text-indigo-400" />
-        <div>
-          <h1 className="text-lg font-bold text-zinc-100">Evening review</h1>
-          <p className="text-xs text-zinc-500">
-            {new Date().toLocaleDateString("en-AU", { weekday: "long", day: "numeric", month: "long" })}
-          </p>
+      <div className="flex items-center justify-between pt-2">
+        <div className="flex items-center gap-3">
+          <Moon size={20} className="text-indigo-400" />
+          <div>
+            <h1 className="text-lg font-bold text-zinc-100">Evening review</h1>
+            <p className="text-xs text-zinc-500">{formatDdMmYyyy(forDate)}</p>
+          </div>
+        </div>
+        <div className="flex items-center gap-1.5">
+          <button onClick={() => goDate(addDays(forDate, -1))} className="p-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-400 hover:text-zinc-100 transition-colors text-sm" title="Previous day">&#8592;</button>
+          <button onClick={() => goDate(addDays(forDate, 1))} disabled={forDate >= TODAY} className="p-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-400 hover:text-zinc-100 transition-colors text-sm disabled:opacity-30 disabled:cursor-not-allowed" title="Next day">&#8594;</button>
+          {isPast && <button onClick={() => goDate(TODAY)} className="px-2 py-1 rounded-lg bg-emerald-800/40 hover:bg-emerald-700/40 text-emerald-400 text-xs font-semibold transition-colors">Today</button>}
         </div>
       </div>
+
+      {isPast && (
+        <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-amber-900/30 border border-amber-800/50 text-amber-300 text-xs font-medium">
+          Editing past day — {formatDdMmYyyy(forDate)}
+        </div>
+      )}
 
       <MacroRef summary={yestData ?? undefined} />
 

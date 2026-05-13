@@ -83,8 +83,8 @@ macrofactor-scraper/
 
 | Path | Page | What it shows |
 |------|------|---------------|
-| `/` | Today | Calorie ring, macro bars, calorie split %, yesterday delta, rolling averages, heatmap, 14-day table with 7d avg footer |
-| `/health` | Health | All Garmin metrics (recovery / wellness / training / activity), date picker, sync button, 30-day sparklines per metric |
+| `/` | Today | Calorie ring, macro bars, calorie split %, yesterday delta, rolling averages, heatmap, 14-day table; **prev/next day nav via `?date=`** |
+| `/health` | Health | All Garmin metrics (recovery / wellness / training / activity), date picker, sync button (session-auth), 30-day sparklines |
 | `/trends` | Trends | Field toggles, range presets, per-field stats (avg/min/max/slope), optional 7d MA overlay, CSV export |
 | `/data-health` | Data Health | Suspicious days (>5000 kcal), inline diagnostics, one-click repair, metric catalog with trust toggles |
 | `/explorer` | Explorer | Dataset picker, sort/filter/paginate (50/page), column visibility, per-column stats, CSV export |
@@ -116,11 +116,12 @@ GET  /v1/excel/metrics/{metric_name}.csv
 
 # Garmin (all require auth)
 GET  /v1/garmin/status
-POST /v1/garmin/sync?sync_date=YYYY-MM-DD       ← ingest key
+POST /v1/garmin/sync?sync_date=YYYY-MM-DD       ← session auth (cookie or read key)
 GET  /v1/garmin/values/{YYYY-MM-DD}
 GET  /v1/garmin/categories
 GET  /v1/garmin/series/{metric_name}?days=30
-GET  /v1/garmin/debug/{YYYY-MM-DD}              ← ingest key, troubleshooting only
+GET  /v1/garmin/debug/{YYYY-MM-DD}              ← session auth
+GET  /v1/diagnostics/weight/{YYYY-MM-DD}        ← shows all weight rows for date (source/timestamp/qty)
 
 GET  /{any-other-path}                          ← SPA catch-all → dashboard.html
 ```
@@ -142,7 +143,20 @@ Affected metrics (`RUNNING_TOTAL_SUMMARY_KEYS`):
 {"calories", "protein", "carbohydrates", "fat", "water", "active_energy"}
 ```
 
-`steps` and `weight` are unaffected (steps sums normally; weight uses latest-wins).
+`steps` and `weight` are `REPLACEMENT_SUMMARY_KEYS` — source priority wins, then latest-by-timestamp within that source (see below).
+
+### Source priority for replacement metrics
+
+`SOURCE_PRIORITY` in `health_export.py` determines which source wins when multiple sources record the same metric on the same day:
+
+```python
+SOURCE_PRIORITY = {
+    "weight": ("MacroFactor",),   # MacroFactor > Apple Health
+    "steps":  ("Garmin",),        # Garmin > Apple Health
+}
+```
+
+If no priority source has data, fallback is the row with the latest `(timestamp, id)`. `garmin_steps` maps to summary key `steps` (added to `_summary_key`), so Garmin steps flow into the same field as Apple Health steps but win the priority contest.
 
 ### Midnight detection
 
@@ -300,6 +314,7 @@ Look at `extracted.*` and `payloads.*.numeric_matches`. If a value appears at an
 ## What has NOT been done (potential next tasks)
 
 - **Garmin backfill**: `sync_recent(days=2)` only covers today + yesterday. To backfill history, loop `garmin.sync_date(d, service)` over a date range manually or add a backfill endpoint.
+- **Historical step data**: `garmin_steps` now maps to `steps` with source priority (Garmin > Apple Health), but days before Garmin integration was active still show Apple Health steps. A backfill endpoint that syncs `garmin_steps` for a date range would fix historical charts.
 - **Health tab long-range charts**: Current sparklines are 30 days. Could add date-range picker for longer history.
 - **Weekly/monthly aggregation view**: Trends shows daily; no weekly rollup chart.
 - **Food-level detail**: Not possible — Apple Health only stores nutrient totals, not individual food items.
