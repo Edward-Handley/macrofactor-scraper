@@ -1,6 +1,7 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Pencil } from "lucide-react";
 import { useDashboardSummary, usePreferences } from "../hooks/use-dashboard";
 import { useCutPhases } from "../hooks/use-daily-log";
 import { CalorieRing } from "../components/charts/calorie-ring";
@@ -43,32 +44,78 @@ function Delta({ value, reversed = false, decimals = 0, unit = "" }: {
   );
 }
 
-function StatCard({ label, value, unit, delta, deltaReversed = false, deltaDecimals = 0, sparkData, field }: {
+function StatCard({ label, value, unit, delta, deltaReversed = false, deltaDecimals = 0, sparkData, field, onEditSave }: {
   label: string; value: number | null; unit: string;
   delta?: number | null; deltaReversed?: boolean; deltaDecimals?: number;
   sparkData: DailySummary[]; field: "weight" | "steps" | "active_energy" | "water";
+  onEditSave?: (v: number) => Promise<void>;
 }) {
   const meta = FIELD_META[field];
+  const [editing, setEditing] = useState(false);
+  const [editVal, setEditVal] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  async function handleSave() {
+    const n = parseFloat(editVal);
+    if (isNaN(n) || n <= 0 || !onEditSave) return;
+    setSaving(true);
+    try { await onEditSave(n); } finally { setSaving(false); }
+    setEditing(false);
+  }
+
   return (
     <Card className="flex flex-col gap-3">
       <div className="flex items-center justify-between">
         <span className="text-xs font-semibold text-zinc-500 uppercase tracking-wide">{label}</span>
-        {delta != null && (
-          <span className="text-xs text-zinc-500">vs prev 7d</span>
-        )}
+        <div className="flex items-center gap-2">
+          {onEditSave && !editing && (
+            <button
+              onClick={() => { setEditVal(value != null ? String(value) : ""); setEditing(true); }}
+              className="text-zinc-600 hover:text-zinc-400 transition-colors"
+              title="Override weight"
+            >
+              <Pencil size={11} />
+            </button>
+          )}
+          {delta != null && !editing && <span className="text-xs text-zinc-500">vs prev 7d</span>}
+        </div>
       </div>
-      <div className="flex items-end gap-1.5">
-        <span className="text-2xl font-black text-zinc-50 tabular-nums leading-none">
-          {fmt(value, meta.decimals)}
-        </span>
-        {unit && <span className="text-sm text-zinc-500 mb-0.5">{unit}</span>}
-      </div>
-      <div className="flex items-center justify-between">
-        <Sparkline data={sparkData} field={field} color={meta.color} height={36} />
-        {delta != null && (
-          <Delta value={delta} reversed={deltaReversed} decimals={deltaDecimals} unit={unit ? ` ${unit}` : ""} />
-        )}
-      </div>
+      {editing ? (
+        <div className="flex items-center gap-2 flex-wrap">
+          <input
+            type="number" step="0.1" min="30" max="200"
+            value={editVal}
+            onChange={(e) => setEditVal(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter") handleSave(); if (e.key === "Escape") setEditing(false); }}
+            className="w-24 bg-zinc-800 border border-zinc-600 rounded-lg px-2 py-1 text-sm text-zinc-100 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+            autoFocus
+          />
+          <span className="text-xs text-zinc-500">{unit}</span>
+          <button onClick={handleSave} disabled={saving}
+            className="px-2.5 py-1 rounded-lg bg-emerald-700 hover:bg-emerald-600 text-white text-xs font-semibold disabled:opacity-50 transition-colors">
+            {saving ? "…" : "Save"}
+          </button>
+          <button onClick={() => setEditing(false)}
+            className="px-2.5 py-1 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-400 text-xs transition-colors">
+            Cancel
+          </button>
+        </div>
+      ) : (
+        <div className="flex items-end gap-1.5">
+          <span className="text-2xl font-black text-zinc-50 tabular-nums leading-none">
+            {fmt(value, meta.decimals)}
+          </span>
+          {unit && <span className="text-sm text-zinc-500 mb-0.5">{unit}</span>}
+        </div>
+      )}
+      {!editing && (
+        <div className="flex items-center justify-between">
+          <Sparkline data={sparkData} field={field} color={meta.color} height={36} />
+          {delta != null && (
+            <Delta value={delta} reversed={deltaReversed} decimals={deltaDecimals} unit={unit ? ` ${unit}` : ""} />
+          )}
+        </div>
+      )}
     </Card>
   );
 }
@@ -97,9 +144,15 @@ export function Today() {
   const end = forDate;
   const start = addDays(forDate, -89);
 
+  const qc = useQueryClient();
   const { data: summary, isLoading, error } = useDashboardSummary(start, end);
   const { data: prefs } = usePreferences();
   const { data: cutData } = useCutPhases();
+
+  const saveWeight = useMutation({
+    mutationFn: (weight_kg: number) => api.dailyLog.upsert(forDate, { weight_kg }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["dashboard-summary"] }),
+  });
   const { data: garminToday } = useQuery({
     queryKey: ["garmin-values", forDate],
     queryFn: () => api.garmin.values(forDate),
@@ -305,6 +358,7 @@ export function Today() {
           deltaDecimals={1}
           sparkData={recent30}
           field="weight"
+          onEditSave={(v) => saveWeight.mutateAsync(v).then(() => {})}
         />
         <StatCard
           label="Steps"
