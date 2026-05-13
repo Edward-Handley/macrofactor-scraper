@@ -566,6 +566,7 @@ class DailyLog(BaseModel):
     hrv_overnight: int | None = None
     water_litres: float | None = None
     notes: str | None = None
+    weight_kg: float | None = None
     created_at: dt.datetime | None = None
     updated_at: dt.datetime | None = None
 
@@ -600,6 +601,7 @@ class DailyLogUpsert(BaseModel):
     hrv_overnight: int | None = None
     water_litres: float | None = None
     notes: str | None = None
+    weight_kg: float | None = None
 
 
 class DailyLogListResponse(BaseModel):
@@ -669,6 +671,7 @@ def _row_to_daily_log(row: dict) -> DailyLog:
         hrv_overnight=row.get("hrv_overnight"),
         water_litres=row.get("water_litres"),
         notes=row.get("notes"),
+        weight_kg=row.get("weight_kg"),
         created_at=row.get("created_at"),
         updated_at=row.get("updated_at"),
     )
