@@ -103,6 +103,7 @@ export function Morning() {
   const [vyvanseTime, setVyvanseTime] = useState("");
   const [dexTaken, setDexTaken] = useState<boolean | null>(null);
   const [dexTime, setDexTime] = useState("");
+  const [weightKg, setWeightKg] = useState("");
   const [notes, setNotes] = useState("");
   const [saved, setSaved] = useState(false);
 
@@ -116,6 +117,7 @@ export function Morning() {
     setVyvanseTime(existing.vyvanse_time ?? "");
     setDexTaken(existing.dex_booster_taken ?? null);
     setDexTime(existing.dex_time ?? "");
+    setWeightKg(existing.weight_kg != null ? String(existing.weight_kg) : "");
     setNotes(existing.notes ?? "");
   }, [existing]);
 
@@ -138,6 +140,8 @@ export function Morning() {
     if (vyvanseTime) payload.vyvanse_time = vyvanseTime;
     if (dexTaken != null) payload.dex_booster_taken = dexTaken;
     if (dexTime) payload.dex_time = dexTime;
+    const parsedWeight = parseFloat(weightKg);
+    if (!isNaN(parsedWeight) && parsedWeight > 0) payload.weight_kg = parsedWeight;
     if (notes.trim()) payload.notes = notes.trim();
 
     await upsert.mutateAsync(payload);
@@ -195,6 +199,32 @@ export function Morning() {
           Editing past day — {formatDdMmYyyy(forDate)}
         </div>
       )}
+
+      <Section title="Weight">
+        <div className="flex items-center gap-3">
+          <input
+            type="number"
+            step="0.1"
+            min="30"
+            max="200"
+            value={weightKg}
+            onChange={(e) => { dirtyRef.current = true; setWeightKg(e.target.value); }}
+            placeholder={latestWeight != null ? latestWeight.toFixed(1) : "kg"}
+            className="w-32 bg-zinc-800 border border-zinc-700 rounded-xl px-3 py-2.5 text-sm text-zinc-100 placeholder-zinc-600 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+          />
+          <span className="text-sm text-zinc-500">kg</span>
+          {weightKg && (
+            <button
+              type="button"
+              onClick={() => { dirtyRef.current = true; setWeightKg(""); }}
+              className="text-xs text-zinc-600 hover:text-zinc-400 transition-colors"
+            >
+              clear
+            </button>
+          )}
+        </div>
+        <p className="text-[11px] text-zinc-600">Overrides MacroFactor trend weight on all pages.</p>
+      </Section>
 
       <Section title="How are you feeling?">
         <ScaleSlider label="Energy" value={amEnergy} onChange={markDirty(setAmEnergy)} variant="energy" />

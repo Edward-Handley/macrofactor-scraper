@@ -462,6 +462,7 @@ export interface DailyLog {
   hrv_overnight: number | null;
   water_litres: number | null;
   notes: string | null;
+  weight_kg: number | null;
   created_at: string | null;
   updated_at: string | null;
 }

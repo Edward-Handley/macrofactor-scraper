@@ -685,6 +685,21 @@ class HealthAutoExportService:
             if quantity is not None:
                 summaries.setdefault(day, {})[key] = quantity
 
+        # Manual weight_kg logged in morning form overrides all other weight sources
+        log_q = "SELECT log_date, weight_kg FROM daily_logs WHERE weight_kg IS NOT NULL"
+        log_params: list[Any] = []
+        if start is not None:
+            log_q += " AND log_date >= ?"
+            log_params.append(start.isoformat())
+        if end is not None:
+            log_q += " AND log_date <= ?"
+            log_params.append(end.isoformat())
+        with self._connect() as conn:
+            for lr in conn.execute(log_q, log_params).fetchall():
+                day = _parse_date(lr["log_date"])
+                if day is not None:
+                    summaries.setdefault(day, {})["weight"] = float(lr["weight_kg"])
+
         items = [DailySummary(date=day, **values) for day, values in sorted(summaries.items())]
         return items
 
@@ -1479,6 +1494,7 @@ class HealthAutoExportService:
                     hrv_overnight INTEGER,
                     water_litres REAL,
                     notes TEXT,
+                    weight_kg REAL,
                     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
                 );
@@ -1502,6 +1518,10 @@ class HealthAutoExportService:
                     ON strong_workout_sets (exercise_name, workout_date);
                 """
             )
+            # Migrations for existing DBs
+            dl_cols = {c["name"] for c in conn.execute("PRAGMA table_info(daily_logs)").fetchall()}
+            if "weight_kg" not in dl_cols:
+                conn.execute("ALTER TABLE daily_logs ADD COLUMN weight_kg REAL")
         self._initialized = True
 
     # ─── Garmin metric upsert ────────────────────────────────────────────────
@@ -1635,7 +1655,7 @@ class HealthAutoExportService:
             "gym_notes", "cardio_type", "cardio_minutes", "cardio_avg_hr", "vyvanse_taken",
             "vyvanse_time", "dex_booster_taken", "dex_time", "sleep_hours", "sleep_quality",
             "sleep_score", "am_energy", "pm_energy", "motivation", "hunger", "mood", "stress",
-            "soreness", "digestion", "rhr", "hrv_overnight", "water_litres", "notes",
+            "soreness", "digestion", "rhr", "hrv_overnight", "water_litres", "notes", "weight_kg",
         }
         clean = {k: v for k, v in fields.items() if k in allowed}
 
