@@ -236,8 +236,10 @@ def build_coach_data(service: Any, checkin_date: date) -> CoachData:
     # Yesterday's daily_log (sleep data entered the previous evening or morning)
     yesterday_log = service.get_daily_log(yesterday.isoformat())
 
-    # Garmin data for yesterday — authoritative for sleep, steps, RHR, HRV
+    # Garmin: daytime metrics (steps, RHR, activity) live under yesterday's date.
+    # Overnight metrics (sleep, HRV) are labeled by Garmin with the wake-up date = today.
     garmin = _get_garmin_values(service, yesterday)
+    garmin_tonight = _get_garmin_values(service, checkin_date)
 
     # Recent measurements (last entry)
     meas_rows = service.get_measurements(seven_ago, checkin_date)
@@ -258,24 +260,27 @@ def build_coach_data(service: Any, checkin_date: date) -> CoachData:
     # Steps: prefer Garmin (more accurate) over Apple Health
     steps: float | None = garmin.get("garmin_steps") or (yest.steps if yest else None)
 
-    # Sleep: prefer Garmin (yesterday) → yesterday's manual log entry
-    garmin_sleep_mins = garmin.get("sleep_minutes")
+    # Sleep: Garmin labels by wake-up date (today) → yesterday fallback → manual log
+    garmin_sleep_mins = garmin_tonight.get("sleep_minutes") or garmin.get("sleep_minutes")
     sleep_hours: float | None = (
         round(garmin_sleep_mins / 60, 2) if garmin_sleep_mins is not None
         else (float(yesterday_log["sleep_hours"]) if yesterday_log and yesterday_log.get("sleep_hours") is not None else None)
     )
+    _sleep_score_raw = garmin_tonight.get("sleep_score") or garmin.get("sleep_score")
     sleep_score: int | None = (
-        int(round(garmin.get("sleep_score"))) if garmin.get("sleep_score") is not None
+        int(round(_sleep_score_raw)) if _sleep_score_raw is not None
         else (yesterday_log.get("sleep_score") if yesterday_log else None)
     )
 
-    # RHR + HRV: prefer Garmin (yesterday) → yesterday's manual log entry
+    # RHR: daytime metric, stored under yesterday
     rhr: int | None = (
         int(round(garmin.get("resting_heart_rate"))) if garmin.get("resting_heart_rate") is not None
         else (yesterday_log.get("rhr") if yesterday_log else None)
     )
+    # HRV: overnight metric, labeled by wake-up date (today) → yesterday fallback → manual log
+    _hrv_raw = garmin_tonight.get("hrv_overnight") or garmin.get("hrv_overnight")
     hrv_overnight: int | None = (
-        int(round(garmin.get("hrv_overnight"))) if garmin.get("hrv_overnight") is not None
+        int(round(_hrv_raw)) if _hrv_raw is not None
         else (yesterday_log.get("hrv_overnight") if yesterday_log else None)
     )
 
