@@ -710,3 +710,20 @@ def _row_to_cut_phase(row: dict) -> CutPhase:
 class CoachDraftResponse(BaseModel):
     date: str
     prompt_text: str
+
+
+# ─── Readiness (HRV + RHR baseline) ──────────────────────────────────────────
+
+class ReadinessReport(BaseModel):
+    date: str
+    hrv_today: float | None = None
+    hrv_baseline_mean: float | None = None
+    hrv_baseline_sd: float | None = None
+    hrv_z: float | None = None
+    rhr_today: float | None = None
+    rhr_baseline_mean: float | None = None
+    rhr_baseline_sd: float | None = None
+    rhr_z: float | None = None
+    score: float | None = None
+    band: str | None = None
+    summary: str

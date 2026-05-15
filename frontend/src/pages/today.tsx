@@ -2,12 +2,13 @@ import { useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Pencil } from "lucide-react";
-import { useDashboardSummary, usePreferences } from "../hooks/use-dashboard";
+import { useDashboardSummary, usePreferences, useReadiness } from "../hooks/use-dashboard";
 import { useCutPhases } from "../hooks/use-daily-log";
 import { CalorieRing } from "../components/charts/calorie-ring";
 import { MacroStack } from "../components/charts/macro-stack";
 import { Sparkline } from "../components/charts/sparkline";
 import { CalendarHeatmap } from "../components/charts/calendar-heatmap";
+import { ReadinessCard } from "../components/charts/readiness-card";
 import { api } from "../lib/api";
 import { fmt, formatMinutesAsHoursMinutes, isoDate, formatShortDate, formatDdMmYyyy, deltaArrow } from "../lib/format";
 import { FIELD_META } from "../lib/types";
@@ -158,6 +159,7 @@ export function Today() {
     queryFn: () => api.garmin.values(forDate),
     staleTime: 300_000,
   });
+  const { data: readiness } = useReadiness(forDate);
   const activePhase = cutData?.phases.find((p) => !p.end_date || p.end_date >= TODAY) ?? null;
   const cutBannerDay = activePhase
     ? Math.floor((new Date().getTime() - new Date(activePhase.start_date).getTime()) / 86_400_000) + 1
@@ -399,6 +401,10 @@ export function Today() {
             unit="ms"
           />
         </div>
+      )}
+
+      {hasGarminRecovery && readiness && (
+        <ReadinessCard report={readiness} />
       )}
 
       {/* Averages strip */}

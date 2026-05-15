@@ -60,12 +60,21 @@ HEALTH_EXPORT_API_KEY=          # ingest write key (used by HealthAutoExport + G
 HEALTH_EXPORT_READ_API_KEY=     # read-only key (dashboard, CSV exports)
 HEALTH_EXPORT_SQLITE_PATH=health_export.sqlite3
 SESSION_SECRET=                 # signs dashboard login cookies
-DASHBOARD_PASSWORD=             # browser login password
+DASHBOARD_PASSWORD_HASH=        # argon2id hash of dashboard password (generate with command below)
 
 GARMIN_USERNAME=                # Garmin account email
 GARMIN_PASSWORD=                # Garmin account password
 GARMIN_MFA_SECRET=              # optional — TOTP secret for 2FA accounts
 ```
+
+Generate `DASHBOARD_PASSWORD_HASH`:
+
+```powershell
+python -m macrofactor_scraper.hash_password
+# paste the output line into .env
+```
+
+`DASHBOARD_PASSWORD` (plaintext) is still accepted as a fallback for local dev.
 
 ## Run locally
 

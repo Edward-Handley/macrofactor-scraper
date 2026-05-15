@@ -565,12 +565,16 @@ def test_strong_import_rejects_oversized_csv(tmp_path: Path, monkeypatch: pytest
 
 
 def test_production_requires_distinct_runtime_secrets() -> None:
+    from argon2 import PasswordHasher
+    ph = PasswordHasher()
+    pw_hash = ph.hash("password")
+
     invalid = Settings(
         environment="production",
         ingest_api_key="same",
         read_api_key="same",
         session_secret="session",
-        dashboard_password="password",
+        dashboard_password_hash=pw_hash,
     )
     with pytest.raises(ValueError, match="distinct"):
         invalid.validate_runtime_security()
@@ -580,9 +584,36 @@ def test_production_requires_distinct_runtime_secrets() -> None:
         ingest_api_key="ingest",
         read_api_key="read",
         session_secret="session",
-        dashboard_password="password",
+        dashboard_password_hash=pw_hash,
     )
     valid.validate_runtime_security()
+
+
+def test_production_requires_dashboard_password_hash() -> None:
+    with pytest.raises(ValueError, match="DASHBOARD_PASSWORD_HASH"):
+        Settings(
+            environment="production",
+            ingest_api_key="ingest",
+            read_api_key="read",
+            session_secret="session",
+            dashboard_password="plaintext-not-allowed-in-prod",
+        ).validate_runtime_security()
+
+
+def test_verify_dashboard_password_argon2() -> None:
+    from argon2 import PasswordHasher
+    ph = PasswordHasher()
+    pw_hash = ph.hash("mypassword")
+
+    settings = Settings(ingest_api_key="key", dashboard_password_hash=pw_hash)
+    assert settings.verify_dashboard_password("mypassword") is True
+    assert settings.verify_dashboard_password("wrongpassword") is False
+
+
+def test_verify_dashboard_password_plaintext_fallback() -> None:
+    settings = Settings(ingest_api_key="key", dashboard_password="plaintext")
+    assert settings.verify_dashboard_password("plaintext") is True
+    assert settings.verify_dashboard_password("wrong") is False
 
 
 def test_production_read_key_never_falls_back_to_ingest_key() -> None:
@@ -874,5 +905,54 @@ def test_malformed_payload_returns_400(tmp_path: Path) -> None:
             headers={"X-API-Key": "secret", "Content-Type": "application/json"},
         )
         assert response.status_code == 400
+    finally:
+        _clear_overrides()
+
+
+def test_readiness_endpoint_insufficient_data(tmp_path: Path) -> None:
+    client = _client(tmp_path)
+    try:
+        resp = client.get("/v1/insights/readiness/2026-05-15", headers=_auth())
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["band"] is None
+        assert data["score"] is None
+        assert "Insufficient" in data["summary"]
+    finally:
+        _clear_overrides()
+
+
+def test_readiness_endpoint_with_garmin_data(tmp_path: Path) -> None:
+    from macrofactor_scraper.health_export import HealthAutoExportService
+    from datetime import date, timedelta
+
+    settings = Settings(ingest_api_key="secret", sqlite_path=str(tmp_path / "health.sqlite3"))
+    service = HealthAutoExportService(settings.sqlite_path)
+    app.dependency_overrides[get_settings] = lambda: settings
+    app.dependency_overrides[get_health_export_service] = lambda: service
+    client = TestClient(app)
+
+    try:
+        target = date(2026, 5, 15)
+        # Seed 7 baseline days + today for HRV and RHR
+        hrv_values = [45.0, 47.0, 46.0, 44.0, 48.0, 45.0, 46.0]
+        rhr_values = [58.0, 57.0, 59.0, 58.0, 57.0, 59.0, 58.0]
+        for i, (hrv, rhr) in enumerate(zip(hrv_values, rhr_values)):
+            d = (target - timedelta(days=7 - i)).isoformat()
+            service.upsert_garmin_metric("hrv_overnight", "ms", d, hrv)
+            service.upsert_garmin_metric("resting_heart_rate", "bpm", d, rhr)
+        # Today: high HRV (good), low RHR (good) → should be green
+        service.upsert_garmin_metric("hrv_overnight", "ms", target.isoformat(), 62.0)
+        service.upsert_garmin_metric("resting_heart_rate", "bpm", target.isoformat(), 50.0)
+
+        resp = client.get(f"/v1/insights/readiness/{target.isoformat()}", headers=_auth())
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["band"] == "green"
+        assert data["score"] is not None and data["score"] > 67
+        assert data["hrv_today"] == 62.0
+        assert data["rhr_today"] == 50.0
+        assert data["hrv_z"] is not None and data["hrv_z"] > 0
+        assert data["rhr_z"] is not None and data["rhr_z"] < 0
     finally:
         _clear_overrides()

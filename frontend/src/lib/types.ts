@@ -547,3 +547,20 @@ export interface GarminCategoriesResponse {
   categories: Record<string, string[]>;
   units: Record<string, string>;
 }
+
+// - Readiness (HRV + RHR baseline) -
+
+export interface ReadinessReport {
+  date: string;
+  hrv_today: number | null;
+  hrv_baseline_mean: number | null;
+  hrv_baseline_sd: number | null;
+  hrv_z: number | null;
+  rhr_today: number | null;
+  rhr_baseline_mean: number | null;
+  rhr_baseline_sd: number | null;
+  rhr_z: number | null;
+  score: number | null;
+  band: "green" | "amber" | "red" | null;
+  summary: string;
+}

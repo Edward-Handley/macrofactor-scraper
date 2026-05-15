@@ -14,6 +14,7 @@ import type {
   IngestStatus,
   MetricCatalogResponse,
   Preferences,
+  ReadinessReport,
   RepairReport,
   StrongAnalyticsResponse,
   StrongExerciseDetailResponse,
@@ -160,5 +161,9 @@ export const api = {
   coach: {
     draft: (date?: string) =>
       request<CoachDraftResponse>(`/v1/coach/draft${date ? `?for_date=${date}` : ""}`),
+  },
+
+  insights: {
+    readiness: (date: string) => request<ReadinessReport>(`/v1/insights/readiness/${date}`),
   },
 };

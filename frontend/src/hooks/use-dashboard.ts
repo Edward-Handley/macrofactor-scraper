@@ -160,3 +160,13 @@ export function useGarminSeries(metric: string, options: { days?: number; start?
     enabled: !!metric,
   });
 }
+
+export function useReadiness(date: string) {
+  return useQuery({
+    queryKey: ["readiness", date],
+    queryFn: () => api.insights.readiness(date),
+    staleTime: 300_000,
+    refetchOnWindowFocus: false,
+    enabled: !!date,
+  });
+}

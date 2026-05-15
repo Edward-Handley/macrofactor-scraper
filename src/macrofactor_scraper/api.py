@@ -43,6 +43,7 @@ from macrofactor_scraper.models import (
     MetricDateDiagnosticResponse,
     MetricListResponse,
     MetricRecordsResponse,
+    ReadinessReport,
     RepairReport,
     StrongAnalyticsResponse,
     StrongExerciseDetailResponse,
@@ -198,7 +199,7 @@ async def login(request: Request, settings: Settings = Depends(get_settings)) ->
         raise HTTPException(status_code=413, detail="Login request body is too large")
     body = raw_body.decode("utf-8")
     password = parse_qs(body).get("password", [""])[0]
-    if not settings.dashboard_secret or not hmac.compare_digest(password, settings.dashboard_secret):
+    if not settings.verify_dashboard_password(password):
         _record_login_failure(client_key, now)
         return HTMLResponse(_read_static("login.html", error="Invalid password"), status_code=401)
     _clear_login_failures(client_key)
@@ -206,7 +207,7 @@ async def login(request: Request, settings: Settings = Depends(get_settings)) ->
     response = RedirectResponse("/", status_code=303)
     response.set_cookie(
         SESSION_COOKIE_NAME,
-        _sign_session(expires_at, settings.effective_session_secret or settings.dashboard_secret),
+        _sign_session(expires_at, settings.effective_session_secret or ""),
         max_age=SESSION_MAX_AGE_SECONDS,
         httponly=True,
         secure=settings.environment == "production",
@@ -865,6 +866,15 @@ async def coach_draft(
     coach_data = build_coach_data(service, target)
     prompt_text = build_prompt(coach_data)
     return CoachDraftResponse(date=target.isoformat(), prompt_text=prompt_text)
+
+
+@app.get("/v1/insights/readiness/{record_date}", response_model=ReadinessReport, dependencies=[Depends(require_private_access)])
+async def insights_readiness(
+    record_date: date,
+    service: HealthAutoExportService = Depends(get_health_export_service),
+) -> ReadinessReport:
+    from macrofactor_scraper.analytics import readiness_for
+    return readiness_for(service, record_date)
 
 
 @app.get("/{full_path:path}")

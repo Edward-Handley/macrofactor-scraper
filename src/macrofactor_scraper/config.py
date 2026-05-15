@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+import hmac
+import logging
 from functools import lru_cache
 from typing import Literal
 
 from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+logger = logging.getLogger(__name__)
 
 
 class Settings(BaseSettings):
@@ -50,6 +54,10 @@ class Settings(BaseSettings):
     dashboard_password: str | None = Field(
         default=None,
         validation_alias=AliasChoices("DASHBOARD_PASSWORD", "MACROFACTOR_DASHBOARD_PASSWORD"),
+    )
+    dashboard_password_hash: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("DASHBOARD_PASSWORD_HASH", "MACROFACTOR_DASHBOARD_PASSWORD_HASH"),
     )
     username: str | None = Field(default=None, validation_alias=AliasChoices("MACROFACTOR_USERNAME"))
     password: str | None = Field(default=None, validation_alias=AliasChoices("MACROFACTOR_PASSWORD"))
@@ -111,12 +119,29 @@ class Settings(BaseSettings):
         return bool(self.username and self.password and self.firebase_api_key)
 
     @property
-    def dashboard_secret(self) -> str | None:
-        return self.dashboard_password or self.ingest_api_key
-
-    @property
     def effective_session_secret(self) -> str | None:
         return self.session_secret or self.ingest_api_key
+
+    def verify_dashboard_password(self, candidate: str) -> bool:
+        """Return True if candidate matches the configured dashboard password.
+
+        Prefers argon2id hash (DASHBOARD_PASSWORD_HASH) over plaintext fallback.
+        """
+        if self.dashboard_password_hash:
+            try:
+                from argon2 import PasswordHasher
+                from argon2.exceptions import VerifyMismatchError, VerificationError, InvalidHashError
+                ph = PasswordHasher()
+                ph.verify(self.dashboard_password_hash, candidate)
+                return True
+            except (VerifyMismatchError, VerificationError, InvalidHashError):
+                return False
+        if self.dashboard_password:
+            return hmac.compare_digest(candidate, self.dashboard_password)
+        if self.ingest_api_key:
+            logger.warning("DASHBOARD_PASSWORD not set; falling back to HEALTH_EXPORT_API_KEY for login")
+            return hmac.compare_digest(candidate, self.ingest_api_key)
+        return False
 
     def validate_runtime_security(self) -> None:
         if self.environment != "production":
@@ -128,7 +153,7 @@ class Settings(BaseSettings):
                 "HEALTH_EXPORT_API_KEY": self.ingest_api_key,
                 "HEALTH_EXPORT_READ_API_KEY": self.read_api_key,
                 "SESSION_SECRET": self.session_secret,
-                "DASHBOARD_PASSWORD": self.dashboard_password,
+                "DASHBOARD_PASSWORD_HASH": self.dashboard_password_hash,
             }.items()
             if not value
         ]
@@ -140,8 +165,6 @@ class Settings(BaseSettings):
             reused.append("HEALTH_EXPORT_READ_API_KEY must be different from HEALTH_EXPORT_API_KEY")
         if self.session_secret in {self.ingest_api_key, self.read_api_key, self.dashboard_password}:
             reused.append("SESSION_SECRET must be different from API keys and DASHBOARD_PASSWORD")
-        if self.dashboard_password in {self.ingest_api_key, self.read_api_key}:
-            reused.append("DASHBOARD_PASSWORD must be different from API keys")
         if reused:
             raise ValueError("Production secrets must be distinct: " + "; ".join(reused))
 

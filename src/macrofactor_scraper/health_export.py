@@ -1,16 +1,72 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import hashlib
-import csv
-import io
 import json
 import sqlite3
-from collections.abc import Iterable
-from dataclasses import dataclass
-from datetime import date, datetime, time, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from macrofactor_scraper._aggregation import (
+    REPLACEMENT_SUMMARY_KEYS,
+    RUNNING_TOTAL_SUMMARY_KEYS,
+    SOURCE_PRIORITY,
+    SUMMARY_FIELDS,
+    _collapse_additive_rows,
+    _is_midnight_summary,
+    _latest_metric_row,
+    _metric_row_sort_key,
+    _summary_aggregation,
+    _summary_key,
+    _summary_quantity,
+)
+from macrofactor_scraper._normalize import (
+    NormalizedMetric,
+    NormalizedWorkout,
+    _find_metric_objects,
+    _find_workout_objects,
+    normalize_metrics,
+    normalize_workouts,
+)
+from macrofactor_scraper._preferences import (
+    _effective_hidden_fields,
+    _normalize_preferences,
+    _normalize_workout_preferences,
+)
+from macrofactor_scraper._rows import _metric_from_row, _workout_from_row
+from macrofactor_scraper._stats import (
+    _avg,
+    _date_delta,
+    _pearson,
+    _training_rest_delta,
+    _week_start,
+)
+from macrofactor_scraper._strong import (
+    EXERCISE_TAXONOMY_RULES,
+    STRONG_REQUIRED_COLUMNS,
+    StrongParsedSet,
+    _parse_strong_duration,
+    _strong_estimated_1rm_from_row,
+    _strong_session_fingerprint,
+    _strong_session_from_row,
+    _strong_set_fingerprint,
+    _strong_set_from_row,
+    _strong_volume_from_row,
+    classify_strong_exercise,
+    parse_strong_csv,
+)
+from macrofactor_scraper._utils import (
+    _blank_to_none,
+    _canonical_json,
+    _fingerprint,
+    _first_value,
+    _float_or_none,
+    _parse_date,
+    _parse_datetime,
+    _safe_headers,
+    _str_or_none,
+    _validate_range,
+)
 from macrofactor_scraper.models import (
     DailySummary,
     DailySummaryResponse,
@@ -58,85 +114,6 @@ from macrofactor_scraper.models import (
     WorkoutRecord,
     WorkoutPreferences,
 )
-
-
-SUMMARY_FIELDS = ("calories", "protein", "carbohydrates", "fat", "water", "weight", "steps", "active_energy")
-REPLACEMENT_SUMMARY_KEYS = {"weight", "steps"}
-RUNNING_TOTAL_SUMMARY_KEYS = {"calories", "protein", "carbohydrates", "fat", "water", "active_energy"}
-# Source priority for replacement metrics: first match wins; unlisted sources fall back to latest-timestamp.
-SOURCE_PRIORITY: dict[str, tuple[str, ...]] = {
-    "weight": ("MacroFactor",),
-    "steps": ("Garmin",),
-}
-STRONG_REQUIRED_COLUMNS = {
-    "Date",
-    "Workout Name",
-    "Duration",
-    "Exercise Name",
-    "Set Order",
-    "Weight",
-    "Reps",
-    "Distance",
-    "Seconds",
-    "Notes",
-    "Workout Notes",
-    "RPE",
-}
-
-EXERCISE_TAXONOMY_RULES: tuple[tuple[tuple[str, ...], StrongExerciseTaxonomy], ...] = (
-    (("bench press", "chest press", "push up", "dip"), StrongExerciseTaxonomy(movement_pattern="Horizontal Push", primary_group="Chest", secondary_groups=["Triceps", "Shoulders"])),
-    (("overhead press", "shoulder press", "military press", "arnold press"), StrongExerciseTaxonomy(movement_pattern="Vertical Push", primary_group="Shoulders", secondary_groups=["Triceps"])),
-    (("lat pulldown", "pull up", "chin up"), StrongExerciseTaxonomy(movement_pattern="Vertical Pull", primary_group="Back", secondary_groups=["Biceps"])),
-    (("row", "face pull", "reverse fly"), StrongExerciseTaxonomy(movement_pattern="Horizontal Pull", primary_group="Back", secondary_groups=["Biceps", "Rear Delts"])),
-    (("squat", "leg press", "lunge", "split squat", "leg extension"), StrongExerciseTaxonomy(movement_pattern="Squat", primary_group="Quads", secondary_groups=["Glutes"])),
-    (("deadlift", "romanian deadlift", "good morning", "hip thrust", "glute bridge"), StrongExerciseTaxonomy(movement_pattern="Hinge", primary_group="Posterior Chain", secondary_groups=["Hamstrings", "Glutes", "Back"])),
-    (("leg curl", "hamstring curl"), StrongExerciseTaxonomy(movement_pattern="Knee Flexion", primary_group="Hamstrings", secondary_groups=[])),
-    (("curl",), StrongExerciseTaxonomy(movement_pattern="Arm Isolation", primary_group="Biceps", secondary_groups=[])),
-    (("tricep", "triceps", "skullcrusher", "pushdown"), StrongExerciseTaxonomy(movement_pattern="Arm Isolation", primary_group="Triceps", secondary_groups=[])),
-    (("calf raise",), StrongExerciseTaxonomy(movement_pattern="Lower Isolation", primary_group="Calves", secondary_groups=[])),
-    (("crunch", "plank", "leg raise", "sit up", "ab wheel"), StrongExerciseTaxonomy(movement_pattern="Core", primary_group="Core", secondary_groups=[])),
-)
-
-
-@dataclass(frozen=True)
-class NormalizedMetric:
-    name: str
-    units: str | None
-    record_date: date | None
-    timestamp: datetime | None
-    quantity: float | None
-    source: str | None
-    raw: dict[str, Any]
-
-
-@dataclass(frozen=True)
-class NormalizedWorkout:
-    workout_id: str | None
-    name: str | None
-    start_date: datetime | None
-    end_date: datetime | None
-    duration_seconds: float | None
-    energy: float | None
-    raw: dict[str, Any]
-
-
-@dataclass(frozen=True)
-class StrongParsedSet:
-    started_at: datetime
-    workout_date: date
-    workout_name: str
-    duration_seconds: int | None
-    exercise_name: str
-    set_order: str
-    is_warmup: bool
-    weight: float | None
-    reps: float | None
-    distance: float | None
-    seconds: float | None
-    notes: str | None
-    workout_notes: str | None
-    rpe: float | None
-    raw: dict[str, Any]
 
 
 class HealthAutoExportService:
@@ -1821,506 +1798,3 @@ class HealthAutoExportService:
         return cursor.rowcount
 
 
-def normalize_metrics(payload: Any) -> list[NormalizedMetric]:
-    metrics: list[NormalizedMetric] = []
-    for metric in _find_metric_objects(payload):
-        name = str(metric["name"])
-        units = _str_or_none(metric.get("units") or metric.get("unit"))
-        data = metric.get("data")
-        if not isinstance(data, list):
-            continue
-        for item in data:
-            if not isinstance(item, dict):
-                continue
-            timestamp = _parse_datetime(_first_value(item, "date", "timestamp", "startDate", "start_date", "day"))
-            metrics.append(
-                NormalizedMetric(
-                    name=name,
-                    units=units,
-                    record_date=timestamp.date() if timestamp else _parse_date(_first_value(item, "date", "day")),
-                    timestamp=timestamp,
-                    quantity=_float_or_none(_first_value(item, "qty", "value", "quantity")),
-                    source=_str_or_none(_first_value(item, "source", "sourceName")),
-                    raw=item,
-                )
-            )
-    return metrics
-
-
-def normalize_workouts(payload: Any) -> list[NormalizedWorkout]:
-    workouts: list[NormalizedWorkout] = []
-    for item in _find_workout_objects(payload):
-        start = _parse_datetime(_first_value(item, "start", "startDate", "start_date", "date"))
-        end = _parse_datetime(_first_value(item, "end", "endDate", "end_date"))
-        workouts.append(
-            NormalizedWorkout(
-                workout_id=_str_or_none(_first_value(item, "id", "uuid", "workout_id")),
-                name=_str_or_none(_first_value(item, "name", "activityName", "workoutActivityType")),
-                start_date=start,
-                end_date=end,
-                duration_seconds=_float_or_none(_first_value(item, "duration", "duration_seconds", "durationSeconds")),
-                energy=_float_or_none(_first_value(item, "activeEnergy", "active_energy", "energy")),
-                raw=item,
-            )
-        )
-    return workouts
-
-
-def _find_metric_objects(value: Any) -> Iterable[dict[str, Any]]:
-    if isinstance(value, dict):
-        if isinstance(value.get("name"), str) and isinstance(value.get("data"), list):
-            yield value
-        for child in value.values():
-            yield from _find_metric_objects(child)
-    elif isinstance(value, list):
-        for child in value:
-            yield from _find_metric_objects(child)
-
-
-def _find_workout_objects(value: Any) -> Iterable[dict[str, Any]]:
-    if isinstance(value, dict):
-        for key in ("workouts", "workoutData", "workout_data"):
-            children = value.get(key)
-            if isinstance(children, list):
-                for child in children:
-                    if isinstance(child, dict):
-                        yield child
-        for child in value.values():
-            if isinstance(child, (dict, list)):
-                yield from _find_workout_objects(child)
-    elif isinstance(value, list):
-        for child in value:
-            if isinstance(child, dict) and any(k in child for k in ("workoutActivityType", "activityName", "duration")):
-                yield child
-            yield from _find_workout_objects(child)
-
-
-def _metric_from_row(row: sqlite3.Row) -> MetricRecord:
-    return MetricRecord(
-        id=row["id"],
-        metric_name=row["metric_name"],
-        units=row["units"],
-        date=_parse_date(row["record_date"]),
-        timestamp=_parse_datetime(row["timestamp"]),
-        quantity=row["quantity"],
-        source=row["source"],
-        raw=json.loads(row["raw_json"]),
-    )
-
-
-def _workout_from_row(row: sqlite3.Row) -> WorkoutRecord:
-    return WorkoutRecord(
-        id=row["id"],
-        workout_id=row["workout_id"],
-        name=row["name"],
-        start_date=_parse_datetime(row["start_date"]),
-        end_date=_parse_datetime(row["end_date"]),
-        duration_seconds=row["duration_seconds"],
-        energy=row["energy"],
-        raw=json.loads(row["raw_json"]),
-    )
-
-
-def parse_strong_csv(content: bytes, nutrition_start: date) -> tuple[list[StrongParsedSet], int, int, list[str]]:
-    try:
-        text = content.decode("utf-8-sig")
-    except UnicodeDecodeError as exc:
-        raise ValueError("Strong CSV must be UTF-8 encoded") from exc
-    reader = csv.DictReader(io.StringIO(text))
-    if reader.fieldnames is None:
-        raise ValueError("Strong CSV is empty")
-    missing = sorted(STRONG_REQUIRED_COLUMNS - set(reader.fieldnames))
-    if missing:
-        raise ValueError(f"Strong CSV is missing required columns: {', '.join(missing)}")
-
-    parsed: list[StrongParsedSet] = []
-    errors: list[str] = []
-    rows_seen = 0
-    ignored = 0
-    for row_number, row in enumerate(reader, start=2):
-        rows_seen += 1
-        started_at = _parse_datetime(row.get("Date"))
-        if started_at is None:
-            errors.append(f"Row {row_number}: invalid Date")
-            continue
-        workout_date = started_at.date()
-        if workout_date < nutrition_start:
-            ignored += 1
-            continue
-        exercise_name = (row.get("Exercise Name") or "").strip()
-        workout_name = (row.get("Workout Name") or "Workout").strip() or "Workout"
-        set_order = (row.get("Set Order") or "").strip()
-        if not exercise_name or not set_order:
-            errors.append(f"Row {row_number}: missing exercise or set order")
-            continue
-        parsed.append(
-            StrongParsedSet(
-                started_at=started_at,
-                workout_date=workout_date,
-                workout_name=workout_name,
-                duration_seconds=_parse_strong_duration(row.get("Duration")),
-                exercise_name=exercise_name,
-                set_order=set_order,
-                is_warmup=set_order.upper() == "W",
-                weight=_float_or_none(row.get("Weight")),
-                reps=_float_or_none(row.get("Reps")),
-                distance=_float_or_none(row.get("Distance")),
-                seconds=_float_or_none(row.get("Seconds")),
-                notes=_blank_to_none(row.get("Notes")),
-                workout_notes=_blank_to_none(row.get("Workout Notes")),
-                rpe=_float_or_none(row.get("RPE")),
-                raw=dict(row),
-            )
-        )
-    return parsed, rows_seen, ignored, errors
-
-
-def _strong_session_fingerprint(parsed: StrongParsedSet) -> str:
-    return _fingerprint("strong-session", parsed.started_at.isoformat(), parsed.workout_name, parsed.duration_seconds)
-
-
-def _strong_set_fingerprint(parsed: StrongParsedSet) -> str:
-    return _fingerprint(
-        "strong-set",
-        parsed.started_at.isoformat(),
-        parsed.workout_name,
-        parsed.exercise_name,
-        parsed.set_order,
-        parsed.weight,
-        parsed.reps,
-        parsed.distance,
-        parsed.seconds,
-    )
-
-
-def _strong_set_from_row(row: sqlite3.Row) -> StrongSetRecord:
-    volume = _strong_volume_from_row(row)
-    estimate = _strong_estimated_1rm_from_row(row)
-    return StrongSetRecord(
-        id=int(row["id"]),
-        exercise_name=row["exercise_name"],
-        set_order=row["set_order"],
-        is_warmup=bool(row["is_warmup"]),
-        weight=row["weight"],
-        reps=row["reps"],
-        distance=row["distance"],
-        seconds=row["seconds"],
-        rpe=row["rpe"],
-        volume=volume if not bool(row["is_warmup"]) else None,
-        estimated_1rm=estimate if not bool(row["is_warmup"]) else None,
-        notes=row["notes"],
-    )
-
-
-def _strong_session_from_row(row: sqlite3.Row, sets: list[StrongSetRecord]) -> StrongSessionRecord:
-    started_at = _parse_datetime(row["started_at"])
-    workout_date = _parse_date(row["workout_date"])
-    return StrongSessionRecord(
-        id=int(row["id"]),
-        workout_date=workout_date or date.min,
-        started_at=started_at or datetime.min,
-        workout_name=row["workout_name"],
-        duration_seconds=row["duration_seconds"],
-        workout_notes=row["workout_notes"],
-        exercise_count=int(row["exercise_count"] or 0),
-        working_set_count=int(row["working_set_count"] or 0),
-        total_volume=float(row["total_volume"] or 0),
-        sets=sets,
-    )
-
-
-def _strong_volume_from_row(row: sqlite3.Row) -> float:
-    if row["weight"] is None or row["reps"] is None:
-        return 0.0
-    return float(row["weight"]) * float(row["reps"])
-
-
-def _strong_estimated_1rm_from_row(row: sqlite3.Row) -> float | None:
-    if row["weight"] is None or row["reps"] is None:
-        return None
-    weight = float(row["weight"])
-    reps = float(row["reps"])
-    if weight <= 0 or reps <= 0:
-        return None
-    return weight * (1 + reps / 30)
-
-
-def classify_strong_exercise(exercise_name: str) -> StrongExerciseTaxonomy:
-    normalized = exercise_name.lower()
-    for needles, taxonomy in EXERCISE_TAXONOMY_RULES:
-        if any(needle in normalized for needle in needles):
-            return taxonomy
-    return StrongExerciseTaxonomy(movement_pattern="Other", primary_group="Other", secondary_groups=[])
-
-
-def _parse_strong_duration(value: str | None) -> int | None:
-    if not value:
-        return None
-    total = 0
-    for part in value.strip().split():
-        if part.endswith("h"):
-            hours = _float_or_none(part[:-1])
-            if hours is not None:
-                total += int(hours * 3600)
-        elif part.endswith("m"):
-            minutes = _float_or_none(part[:-1])
-            if minutes is not None:
-                total += int(minutes * 60)
-        elif part.endswith("s"):
-            seconds = _float_or_none(part[:-1])
-            if seconds is not None:
-                total += int(seconds)
-    return total or None
-
-
-def _week_start(day: date) -> date:
-    return day - timedelta(days=day.weekday())
-
-
-def _date_delta(days: int) -> timedelta:
-    return timedelta(days=days)
-
-
-def _avg(values: Iterable[float | None]) -> float | None:
-    nums = [float(value) for value in values if value is not None]
-    return sum(nums) / len(nums) if nums else None
-
-
-def _pearson(pairs: Iterable[tuple[float, float]]) -> float | None:
-    values = list(pairs)
-    if len(values) < 2:
-        return None
-    xs = [pair[0] for pair in values]
-    ys = [pair[1] for pair in values]
-    mean_x = sum(xs) / len(xs)
-    mean_y = sum(ys) / len(ys)
-    numerator = sum((x - mean_x) * (y - mean_y) for x, y in values)
-    denom_x = sum((x - mean_x) ** 2 for x in xs)
-    denom_y = sum((y - mean_y) ** 2 for y in ys)
-    denominator = (denom_x * denom_y) ** 0.5
-    if denominator == 0:
-        return None
-    return numerator / denominator
-
-
-def _training_rest_delta(metric: str, training: float | None, rest: float | None) -> StrongTrainingRestDelta:
-    return StrongTrainingRestDelta(
-        metric=metric,
-        training_average=training,
-        rest_average=rest,
-        delta=training - rest if training is not None and rest is not None else None,
-    )
-
-
-def _summary_key(metric_name: str) -> str | None:
-    normalized = metric_name.lower().replace(" ", "_").replace("-", "_")
-    aliases = {
-        "dietary_energy": "calories",
-        "energy_consumed": "calories",
-        "protein": "protein",
-        "dietary_protein": "protein",
-        "carbohydrates": "carbohydrates",
-        "dietary_carbohydrates": "carbohydrates",
-        "total_fat": "fat",
-        "dietary_fat_total": "fat",
-        "dietary_water": "water",
-        "water": "water",
-        "body_mass": "weight",
-        "body_weight": "weight",
-        "weight_body_mass": "weight",
-        "weight": "weight",
-        "step_count": "steps",
-        "steps": "steps",
-        "garmin_steps": "steps",
-        "active_energy": "active_energy",
-        "active_energy_burned": "active_energy",
-    }
-    return aliases.get(normalized)
-
-
-def _summary_aggregation(key: str | None) -> str:
-    if key in REPLACEMENT_SUMMARY_KEYS:
-        return "replacement"
-    return "additive"
-
-
-def _summary_quantity(key: str, units: str | None, quantity: float) -> float | None:
-    normalized_units = (units or "").strip().lower().replace("_", " ")
-    if key in {"calories", "active_energy"}:
-        if normalized_units in {"kj", "kilojoule", "kilojoules"}:
-            return quantity / 4.184
-        return quantity
-    if key == "water":
-        if normalized_units in {"l", "liter", "liters", "litre", "litres"}:
-            return quantity * 1000
-        if normalized_units in {"fl oz", "floz", "fluid ounce", "fluid ounces", "oz"}:
-            return quantity * 29.5735295625
-        return quantity
-    return quantity
-
-
-def _metric_row_sort_key(row: sqlite3.Row) -> tuple[str, int]:
-    return (row["timestamp"] or "", int(row["id"]))
-
-
-def _latest_metric_row(rows: list[sqlite3.Row]) -> sqlite3.Row:
-    return max(rows, key=_metric_row_sort_key)
-
-
-def _is_midnight_summary(timestamp_text: str | None) -> bool:
-    """Return True when the stored timestamp represents an explicit midnight in a known TZ.
-
-    HAE emits daily-summary rows at midnight with a full TZ offset (e.g. "2026-05-06T00:00:00+08:00").
-    Records parsed from bare date strings (e.g. "2026-05-06") store as "2026-05-06T00:00:00" with
-    no tzinfo — we treat those as intraday so they're still summed across batches.
-    """
-    if not timestamp_text:
-        return False
-    ts = _parse_datetime(timestamp_text)
-    if ts is None or ts.tzinfo is None:
-        return False
-    return ts.time() == time(0, 0, 0)
-
-
-def _collapse_additive_rows(rows: list[sqlite3.Row], key: str) -> float:
-    """Collapse a (date, key, source) group into a single value.
-
-    If midnight snapshot rows exist (daily running-total from MacroFactor/HAE),
-    return the LATEST snapshot's quantity only — using max(timestamp, id) so
-    a corrected lower value wins over a stale higher one.
-    Otherwise sum all intraday quantities.
-    """
-    midnight = [r for r in rows if _is_midnight_summary(r["timestamp"])]
-    intraday = [r for r in rows if not _is_midnight_summary(r["timestamp"])]
-
-    if midnight:
-        best = max(midnight, key=_metric_row_sort_key)
-        q = _summary_quantity(key, best["units"], float(best["quantity"]))
-        return q if q is not None else 0.0
-    return sum(
-        q
-        for r in intraday
-        for q in [_summary_quantity(key, r["units"], float(r["quantity"]))]
-        if q is not None
-    )
-
-
-def _normalize_preferences(preferences: DashboardPreferences) -> DashboardPreferences:
-    known_fields = set(SUMMARY_FIELDS)
-    visible = [field for field in preferences.visible_summary_cards if field in known_fields]
-    hidden = [field for field in preferences.hidden_summary_fields if field in known_fields]
-    chart_set = [field for field in preferences.default_chart_set if field in known_fields]
-    source_filters = {
-        str(metric): [str(source) for source in sources if str(source)]
-        for metric, sources in preferences.source_filters.items()
-        if str(metric) and sources
-    }
-    return DashboardPreferences(
-        visible_summary_cards=visible or list(SUMMARY_FIELDS),
-        hidden_summary_fields=hidden,
-        preferred_range_days=max(1, min(365, int(preferences.preferred_range_days))),
-        trusted_metric_names=sorted({name for name in preferences.trusted_metric_names if name}),
-        untrusted_metric_names=sorted({name for name in preferences.untrusted_metric_names if name}),
-        default_chart_set=chart_set or ["calories", "protein", "carbohydrates", "fat", "active_energy"],
-        source_filters=source_filters,
-        workout_preferences=_normalize_workout_preferences(preferences.workout_preferences),
-    )
-
-
-def _normalize_workout_preferences(preferences: WorkoutPreferences) -> WorkoutPreferences:
-    tabs = {"Overview", "Sessions", "Exercises", "Nutrition", "Customize"}
-    cards = {"sessions", "volume", "prs", "protein", "calorie_delta", "load_trend"}
-    charts = {"training_heatmap", "weekly_group_load", "nutrition_scatter", "group_balance", "exercise_progress", "session_timeline"}
-    sorts = {"recent_pr", "volume", "last_performed", "estimated_1rm_delta"}
-    visible_cards = [card for card in preferences.visible_workout_cards if card in cards]
-    default_charts = [chart for chart in preferences.default_charts if chart in charts]
-    return WorkoutPreferences(
-        default_range_days=max(7, min(3650, int(preferences.default_range_days))),
-        landing_tab=preferences.landing_tab if preferences.landing_tab in tabs else "Overview",
-        visible_workout_cards=visible_cards or ["sessions", "volume", "prs", "protein", "calorie_delta", "load_trend"],
-        default_charts=default_charts or ["training_heatmap", "weekly_group_load", "nutrition_scatter", "group_balance"],
-        pinned_exercises=sorted({name.strip() for name in preferences.pinned_exercises if name.strip()}),
-        default_group_filter=preferences.default_group_filter.strip() or "All",
-        default_exercise_sort=preferences.default_exercise_sort if preferences.default_exercise_sort in sorts else "recent_pr",
-        show_import_panel=bool(preferences.show_import_panel),
-    )
-
-
-def _effective_hidden_fields(preferences: DashboardPreferences | None) -> list[str]:
-    if preferences is None:
-        return []
-    visible = set(preferences.visible_summary_cards)
-    hidden = set(preferences.hidden_summary_fields)
-    return [field for field in SUMMARY_FIELDS if field in hidden or field not in visible]
-
-
-def _safe_headers(headers: dict[str, str]) -> dict[str, str]:
-    return {key: ("<redacted>" if key.lower() in {"x-api-key", "authorization"} else value) for key, value in headers.items()}
-
-
-def _canonical_json(value: Any) -> str:
-    return json.dumps(value, sort_keys=True, separators=(",", ":"), default=str)
-
-
-def _fingerprint(*parts: Any) -> str:
-    return hashlib.sha256(_canonical_json(parts).encode("utf-8")).hexdigest()
-
-
-def _first_value(data: dict[str, Any], *keys: str) -> Any:
-    for key in keys:
-        if key in data:
-            return data[key]
-    return None
-
-
-def _str_or_none(value: Any) -> str | None:
-    if value is None:
-        return None
-    return str(value)
-
-
-def _blank_to_none(value: Any) -> str | None:
-    if value is None:
-        return None
-    text = str(value).strip()
-    return text or None
-
-
-def _float_or_none(value: Any) -> float | None:
-    if value is None or value == "":
-        return None
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return None
-
-
-def _parse_datetime(value: Any) -> datetime | None:
-    if isinstance(value, datetime):
-        return value
-    if not isinstance(value, str):
-        return None
-    candidate = value.replace("Z", "+00:00")
-    try:
-        return datetime.fromisoformat(candidate)
-    except ValueError:
-        try:
-            return datetime.fromisoformat(candidate[:10])
-        except ValueError:
-            return None
-
-
-def _parse_date(value: Any) -> date | None:
-    if isinstance(value, date):
-        return value
-    if not isinstance(value, str):
-        return None
-    try:
-        return date.fromisoformat(value[:10])
-    except ValueError:
-        return None
-
-
-def _validate_range(start: date | None, end: date | None) -> None:
-    if start is not None and end is not None and start > end:
-        raise ValueError("start must be on or before end")
