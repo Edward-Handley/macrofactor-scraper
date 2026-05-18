@@ -151,6 +151,30 @@ export function Settings() {
         </div>
       </Card>
 
+      <Card title="Daily goals">
+        <div className="flex items-center justify-between gap-4 py-2">
+          <div>
+            <p className="text-sm text-zinc-300">Protein goal</p>
+            <p className="text-xs text-zinc-600 mt-0.5">Shows progress bar on Today page</p>
+          </div>
+          <div className="flex items-center gap-2">
+            <input
+              type="number"
+              min={0}
+              max={500}
+              value={prefs.protein_goal_g ?? ""}
+              onChange={(e) => {
+                const v = e.target.value ? parseInt(e.target.value) : null;
+                update.mutate({ ...prefs, protein_goal_g: v });
+              }}
+              placeholder="e.g. 180"
+              className="w-24 bg-zinc-800 border border-zinc-700 rounded-xl px-3 py-2 text-sm text-zinc-100 focus:outline-none focus:ring-2 focus:ring-emerald-500 text-right"
+            />
+            <span className="text-sm text-zinc-500">g</span>
+          </div>
+        </div>
+      </Card>
+
       <Card title="Reset to defaults">
         <p className="text-sm text-zinc-500 mb-3">Restore all preferences to their default values.</p>
         <button
@@ -162,6 +186,7 @@ export function Settings() {
             untrusted_metric_names: [],
             default_chart_set: ["calories", "protein", "carbohydrates", "fat", "active_energy"],
             source_filters: {},
+            protein_goal_g: null,
             workout_preferences: {
               default_range_days: 90,
               landing_tab: "Overview",

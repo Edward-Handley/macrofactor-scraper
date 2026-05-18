@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { useCoachDraft } from "../hooks/use-daily-log";
 import { isoDate } from "../lib/format";
-import { ClipboardCopy, Check, RefreshCw } from "lucide-react";
+import { ClipboardCopy, Check, RefreshCw, ExternalLink } from "lucide-react";
 
 const TODAY = isoDate();
 
@@ -22,10 +22,18 @@ export function Coach() {
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     } catch {
-      // fallback: select all in textarea
       const el = document.getElementById("coach-textarea") as HTMLTextAreaElement | null;
       el?.select();
     }
+  }
+
+  async function openInClaude() {
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch {
+      // best-effort
+    }
+    window.open("https://claude.ai/new", "_blank", "noopener,noreferrer");
   }
 
   return (
@@ -56,15 +64,23 @@ export function Coach() {
         </div>
       </div>
 
-      {/* Copy button */}
-      <div className="flex justify-end">
+      {/* Copy buttons */}
+      <div className="flex justify-end gap-2">
         <button
           onClick={copyToClipboard}
           disabled={!text}
-          className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold bg-violet-600 hover:bg-violet-500 text-white disabled:opacity-40 transition-colors"
+          className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold bg-zinc-800 hover:bg-zinc-700 text-zinc-200 disabled:opacity-40 transition-colors"
         >
           {copied ? <Check size={16} /> : <ClipboardCopy size={16} />}
-          {copied ? "Copied!" : "Copy to clipboard"}
+          {copied ? "Copied!" : "Copy"}
+        </button>
+        <button
+          onClick={openInClaude}
+          disabled={!text}
+          className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold bg-violet-600 hover:bg-violet-500 text-white disabled:opacity-40 transition-colors"
+        >
+          <ExternalLink size={16} />
+          Copy + Open Claude
         </button>
       </div>
 

@@ -1,5 +1,7 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
+import { LineChart, Line, XAxis, YAxis, Tooltip, ReferenceLine, ResponsiveContainer } from "recharts";
 import { useCutPhases, useCreateCutPhase, useUpdateCutPhase } from "../hooks/use-daily-log";
+import { useDashboardSummary } from "../hooks/use-dashboard";
 import type { CutPhase, CutPhaseCreate } from "../lib/types";
 import { isoDate } from "../lib/format";
 
@@ -7,6 +9,64 @@ const TODAY = isoDate();
 
 function phaseIsActive(p: CutPhase) {
   return p.end_date === null || p.end_date >= TODAY;
+}
+
+function PhaseProgressChart({ phase }: { phase: CutPhase }) {
+  const { data: summary } = useDashboardSummary(phase.start_date, TODAY);
+
+  const { points, daysToGoal } = useMemo(() => {
+    const summaries = summary?.summaries ?? [];
+    const pts = summaries
+      .filter(d => d.weight != null)
+      .map(d => ({ date: d.date, weight: d.weight as number }));
+
+    let daysToGoal: number | null = null;
+    if (phase.target_weight_kg && pts.length >= 2) {
+      const recent = pts.slice(-7);
+      if (recent.length >= 2) {
+        const first = recent[0];
+        const last = recent[recent.length - 1];
+        const ratePerDay = (last.weight - first.weight) / (recent.length - 1);
+        if (ratePerDay < 0) {
+          daysToGoal = Math.ceil((phase.target_weight_kg - last.weight) / ratePerDay);
+        }
+      }
+    }
+
+    return { points: pts, daysToGoal };
+  }, [summary, phase]);
+
+  if (points.length < 2) return null;
+
+  const weights = points.map(p => p.weight);
+  const minW = Math.min(...weights, phase.target_weight_kg ?? Infinity) - 0.5;
+  const maxW = Math.max(...weights) + 0.5;
+
+  return (
+    <div className="mt-3">
+      <p className="text-xs font-semibold text-zinc-500 uppercase tracking-wide mb-2">Weight trajectory</p>
+      <ResponsiveContainer width="100%" height={120}>
+        <LineChart data={points} margin={{ top: 4, right: 4, left: -24, bottom: 0 }}>
+          <XAxis dataKey="date" hide />
+          <YAxis domain={[minW, maxW]} tick={{ fontSize: 10, fill: "#71717a" }} />
+          <Tooltip
+            contentStyle={{ background: "#18181b", border: "1px solid #3f3f46", borderRadius: 8, fontSize: 11 }}
+            labelStyle={{ color: "#a1a1aa" }}
+            formatter={(v: number) => [`${v.toFixed(1)} kg`, "Weight"]}
+          />
+          <Line type="monotone" dataKey="weight" stroke="#34d399" dot={false} strokeWidth={2} />
+          {phase.target_weight_kg && (
+            <ReferenceLine y={phase.target_weight_kg} stroke="#71717a" strokeDasharray="4 3" label={{ value: `${phase.target_weight_kg} kg`, fill: "#71717a", fontSize: 10, position: "right" }} />
+          )}
+        </LineChart>
+      </ResponsiveContainer>
+      {daysToGoal != null && daysToGoal > 0 && (
+        <p className="text-xs text-zinc-500 mt-1">
+          At current rate: goal in ~<span className="text-zinc-300 font-semibold">{daysToGoal} days</span>
+        </p>
+      )}
+    </div>
+  );
 }
 
 function daysSince(start: string) {
@@ -67,6 +127,7 @@ function PhaseCard({ phase, onEdit }: { phase: CutPhase; onEdit: (p: CutPhase) =
         </div>
       )}
       {phase.notes && <p className="text-xs text-zinc-500">{phase.notes}</p>}
+      {active && phase.target_weight_kg && <PhaseProgressChart phase={phase} />}
     </div>
   );
 }

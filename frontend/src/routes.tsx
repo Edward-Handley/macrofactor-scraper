@@ -12,6 +12,7 @@ import { CutPhases } from "./pages/cut-phases";
 import { Coach } from "./pages/coach";
 import { Measurements } from "./pages/measurements";
 import { Health } from "./pages/health";
+import { WeeklyScorecard } from "./pages/week";
 
 export const router = createBrowserRouter([
   {
@@ -30,6 +31,7 @@ export const router = createBrowserRouter([
       { path: "cut-phases", element: <CutPhases /> },
       { path: "coach", element: <Coach /> },
       { path: "measurements", element: <Measurements /> },
+      { path: "week", element: <WeeklyScorecard /> },
     ],
   },
 ]);

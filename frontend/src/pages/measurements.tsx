@@ -1,11 +1,21 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useMemo } from "react";
 import { CheckCircle, Ruler } from "lucide-react";
 import { useMeasurement, useMeasurements, useUpsertMeasurement } from "../hooks/use-daily-log";
 import { isoDate, offsetDate } from "../lib/format";
-import type { BodyMeasurementUpsert } from "../lib/types";
+import type { BodyMeasurement, BodyMeasurementUpsert } from "../lib/types";
 
 const TODAY = isoDate(new Date());
 const HISTORY_START = offsetDate(-90);
+
+const MEAS_FIELDS: Array<{ key: keyof BodyMeasurementUpsert; label: string; lowerIsBetter: boolean }> = [
+  { key: "waist_cm",   label: "Waist",       lowerIsBetter: true  },
+  { key: "chest_cm",   label: "Chest",       lowerIsBetter: false },
+  { key: "l_arm_cm",   label: "Left arm",    lowerIsBetter: false },
+  { key: "r_arm_cm",   label: "Right arm",   lowerIsBetter: false },
+  { key: "l_thigh_cm", label: "Left thigh",  lowerIsBetter: true  },
+  { key: "r_thigh_cm", label: "Right thigh", lowerIsBetter: true  },
+  { key: "hip_cm",     label: "Hip",         lowerIsBetter: true  },
+];
 
 const FIELDS: Array<{ key: keyof BodyMeasurementUpsert; label: string }> = [
   { key: "waist_cm", label: "Waist" },
@@ -41,6 +51,64 @@ function MeasurementInput({
         <span className="text-xs text-zinc-500 w-7">cm</span>
       </div>
     </label>
+  );
+}
+
+function DeltaSummaryCard({ rows }: { rows: BodyMeasurement[] }) {
+  const sorted = useMemo(() => [...rows].sort((a, b) => a.measure_date.localeCompare(b.measure_date)), [rows]);
+  if (sorted.length < 2) return null;
+  const baseline = sorted[0];
+  const prev = sorted.length >= 2 ? sorted[sorted.length - 2] : null;
+  const latest = sorted[sorted.length - 1];
+
+  const deltas = MEAS_FIELDS.map(({ key, label, lowerIsBetter }) => {
+    const latestVal = latest[key] as number | null;
+    const prevVal = prev?.[key] as number | null | undefined;
+    const baseVal = baseline[key] as number | null;
+    if (latestVal == null) return null;
+    const fromPrev = prevVal != null ? latestVal - prevVal : null;
+    const fromBase = baseVal != null ? latestVal - baseVal : null;
+    return { key, label, lowerIsBetter, latestVal, fromPrev, fromBase };
+  }).filter(Boolean) as Array<{
+    key: string; label: string; lowerIsBetter: boolean;
+    latestVal: number; fromPrev: number | null; fromBase: number | null;
+  }>;
+
+  if (deltas.length === 0) return null;
+
+  function deltaColor(val: number, lowerIsBetter: boolean) {
+    if (Math.abs(val) < 0.05) return "text-zinc-500";
+    const improved = lowerIsBetter ? val < 0 : val > 0;
+    return improved ? "text-emerald-400" : "text-red-400";
+  }
+
+  function fmt(v: number | null) {
+    if (v == null) return "—";
+    return (v > 0 ? "+" : "") + v.toFixed(1) + " cm";
+  }
+
+  return (
+    <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4">
+      <p className="text-xs font-semibold text-zinc-500 uppercase tracking-wide mb-3">Changes since last measurement</p>
+      <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+        {deltas.map(({ key, label, lowerIsBetter, fromPrev, fromBase }) => (
+          <div key={key} className="flex flex-col gap-0.5">
+            <span className="text-[10px] text-zinc-600 uppercase tracking-wide">{label}</span>
+            {fromPrev != null && (
+              <span className={`text-sm font-semibold tabular-nums ${deltaColor(fromPrev, lowerIsBetter)}`}>
+                {fmt(fromPrev)} <span className="text-[10px] font-normal text-zinc-600">vs prev</span>
+              </span>
+            )}
+            {fromBase != null && (
+              <span className={`text-xs tabular-nums ${deltaColor(fromBase, lowerIsBetter)}`}>
+                {fmt(fromBase)} <span className="text-[10px] text-zinc-600">total</span>
+              </span>
+            )}
+          </div>
+        ))}
+      </div>
+      <p className="text-[10px] text-zinc-600 mt-2">Baseline: {baseline.measure_date} · Latest: {latest.measure_date}</p>
+    </div>
   );
 }
 
@@ -89,6 +157,8 @@ export function Measurements() {
 
   return (
     <div className="p-4 md:p-6 space-y-5 max-w-3xl mx-auto">
+      {rows.length >= 2 && <DeltaSummaryCard rows={rows} />}
+
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
         <div className="flex items-center gap-3">
           <div className="w-9 h-9 rounded-xl bg-emerald-500/15 text-emerald-400 flex items-center justify-center">

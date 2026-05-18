@@ -18,6 +18,12 @@ const BAND_STYLES = {
   },
 };
 
+const BAND_HINTS = {
+  green: "Good day for high-intensity training or PR attempts.",
+  amber: "Moderate session recommended — avoid max effort.",
+  red: "Consider active recovery or rest today.",
+};
+
 function ZRow({
   label,
   today,
@@ -103,6 +109,10 @@ export function ReadinessCard({ report }: { report: ReadinessReport }) {
           invert={true}
         />
       </div>
+
+      <p className={`mt-3 text-xs font-medium ${styles.score}`}>
+        {BAND_HINTS[report.band]}
+      </p>
     </div>
   );
 }

@@ -1,9 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { CheckCircle, Sun } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
 import { ScaleSlider } from "../components/inputs/scale-slider";
 import { useDailyLog, useUpsertDailyLog } from "../hooks/use-daily-log";
 import { useDashboardSummary } from "../hooks/use-dashboard";
+import { api } from "../lib/api";
 import { isoDate, formatDdMmYyyy } from "../lib/format";
 
 function addDays(iso: string, n: number): string {
@@ -106,6 +108,17 @@ export function Morning() {
   const [weightKg, setWeightKg] = useState("");
   const [notes, setNotes] = useState("");
   const [saved, setSaved] = useState(false);
+  const [garminPrefilled, setGarminPrefilled] = useState<string[]>([]);
+
+  const { data: garminValues } = useQuery({
+    queryKey: ["garmin-values", forDate],
+    queryFn: () => api.garmin.values(forDate),
+    staleTime: 300_000,
+  });
+
+  const [rhr, setRhr] = useState<number | null>(null);
+  const [hrvOvernight, setHrvOvernight] = useState<number | null>(null);
+  const [sleepHours, setSleepHours] = useState<number | null>(null);
 
   useEffect(() => {
     if (!existing || dirtyRef.current) return;
@@ -119,7 +132,29 @@ export function Morning() {
     setDexTime(existing.dex_time ?? "");
     setWeightKg(existing.weight_kg != null ? String(existing.weight_kg) : "");
     setNotes(existing.notes ?? "");
+    setRhr(existing.rhr ?? null);
+    setHrvOvernight(existing.hrv_overnight ?? null);
+    setSleepHours(existing.sleep_hours ?? null);
   }, [existing]);
+
+  useEffect(() => {
+    if (!garminValues || dirtyRef.current) return;
+    const prefilled: string[] = [];
+    if (rhr == null && garminValues.resting_heart_rate != null) {
+      setRhr(Math.round(garminValues.resting_heart_rate));
+      prefilled.push("rhr");
+    }
+    if (hrvOvernight == null && garminValues.hrv_overnight != null) {
+      setHrvOvernight(Math.round(garminValues.hrv_overnight));
+      prefilled.push("hrv");
+    }
+    if (sleepHours == null && garminValues.sleep_minutes != null) {
+      setSleepHours(Math.round((garminValues.sleep_minutes / 60) * 10) / 10);
+      prefilled.push("sleep");
+    }
+    if (prefilled.length > 0) setGarminPrefilled(prefilled);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [garminValues]);
 
   function markDirty<T>(setter: (value: T) => void) {
     return (value: T) => {
@@ -143,6 +178,9 @@ export function Morning() {
     const parsedWeight = parseFloat(weightKg);
     if (!isNaN(parsedWeight) && parsedWeight > 0) payload.weight_kg = parsedWeight;
     if (notes.trim()) payload.notes = notes.trim();
+    if (rhr != null) payload.rhr = rhr;
+    if (hrvOvernight != null) payload.hrv_overnight = hrvOvernight;
+    if (sleepHours != null) payload.sleep_hours = sleepHours;
 
     await upsert.mutateAsync(payload);
     setSaved(true);
@@ -267,6 +305,58 @@ export function Morning() {
         {trainingType && trainingType !== "rest" && (
           <PillToggle label="Gym done?" value={gymDone} onChange={markDirty(setGymDone)} />
         )}
+      </Section>
+
+      <Section title="Recovery biometrics">
+        {garminPrefilled.length > 0 && (
+          <p className="text-[11px] text-emerald-400/80 font-medium -mt-1">
+            Pre-filled from Garmin — edit to override.
+          </p>
+        )}
+        <div className="grid grid-cols-3 gap-3">
+          <label className="flex flex-col gap-1">
+            <span className="text-xs font-medium text-zinc-400">
+              RHR {garminPrefilled.includes("rhr") && <span className="text-emerald-500/70">· Garmin</span>}
+            </span>
+            <div className="flex items-center gap-1">
+              <input
+                type="number" min={30} max={120}
+                value={rhr ?? ""}
+                onChange={(e) => { dirtyRef.current = true; setRhr(e.target.value ? parseInt(e.target.value) : null); }}
+                className="w-full bg-zinc-800 border border-zinc-700 rounded-xl px-2 py-2 text-sm text-zinc-100 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+              />
+              <span className="text-xs text-zinc-500 shrink-0">bpm</span>
+            </div>
+          </label>
+          <label className="flex flex-col gap-1">
+            <span className="text-xs font-medium text-zinc-400">
+              HRV {garminPrefilled.includes("hrv") && <span className="text-emerald-500/70">· Garmin</span>}
+            </span>
+            <div className="flex items-center gap-1">
+              <input
+                type="number" min={0} max={300}
+                value={hrvOvernight ?? ""}
+                onChange={(e) => { dirtyRef.current = true; setHrvOvernight(e.target.value ? parseInt(e.target.value) : null); }}
+                className="w-full bg-zinc-800 border border-zinc-700 rounded-xl px-2 py-2 text-sm text-zinc-100 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+              />
+              <span className="text-xs text-zinc-500 shrink-0">ms</span>
+            </div>
+          </label>
+          <label className="flex flex-col gap-1">
+            <span className="text-xs font-medium text-zinc-400">
+              Sleep {garminPrefilled.includes("sleep") && <span className="text-emerald-500/70">· Garmin</span>}
+            </span>
+            <div className="flex items-center gap-1">
+              <input
+                type="number" min={0} max={24} step={0.1}
+                value={sleepHours ?? ""}
+                onChange={(e) => { dirtyRef.current = true; setSleepHours(e.target.value ? parseFloat(e.target.value) : null); }}
+                className="w-full bg-zinc-800 border border-zinc-700 rounded-xl px-2 py-2 text-sm text-zinc-100 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+              />
+              <span className="text-xs text-zinc-500 shrink-0">h</span>
+            </div>
+          </label>
+        </div>
       </Section>
 
       <Section title="Notes (optional)">

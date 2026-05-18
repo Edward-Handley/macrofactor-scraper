@@ -118,6 +118,7 @@ class DashboardPreferences(BaseModel):
     default_chart_set: list[str] = Field(default_factory=lambda: ["calories", "protein", "carbohydrates", "fat", "active_energy"])
     source_filters: dict[str, list[str]] = Field(default_factory=dict)
     workout_preferences: WorkoutPreferences = Field(default_factory=WorkoutPreferences)
+    protein_goal_g: int | None = None
 
 
 class DashboardSummaryResponse(BaseModel):

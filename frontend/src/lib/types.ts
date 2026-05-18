@@ -28,6 +28,7 @@ export interface Preferences {
   default_chart_set: string[];
   source_filters: Record<string, string[]>;
   workout_preferences: WorkoutPreferences;
+  protein_goal_g?: number | null;
 }
 
 export interface WorkoutPreferences {

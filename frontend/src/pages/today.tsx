@@ -3,7 +3,7 @@ import { Link, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Pencil } from "lucide-react";
 import { useDashboardSummary, usePreferences, useReadiness } from "../hooks/use-dashboard";
-import { useCutPhases } from "../hooks/use-daily-log";
+import { useCutPhases, useDailyLogs } from "../hooks/use-daily-log";
 import { CalorieRing } from "../components/charts/calorie-ring";
 import { MacroStack } from "../components/charts/macro-stack";
 import { Sparkline } from "../components/charts/sparkline";
@@ -121,6 +121,66 @@ function StatCard({ label, value, unit, delta, deltaReversed = false, deltaDecim
   );
 }
 
+function ProgressBar({ value, max, color }: { value: number; max: number; color: string }) {
+  const pct = Math.min(100, max > 0 ? (value / max) * 100 : 0);
+  const barColor = pct >= 100 ? "#34d399" : pct >= 75 ? "#fbbf24" : "#f87171";
+  return (
+    <div className="h-2 rounded-full bg-zinc-800 overflow-hidden">
+      <div className="h-full rounded-full transition-all" style={{ width: `${pct}%`, background: barColor || color }} />
+    </div>
+  );
+}
+
+function TargetBarsCard({
+  calories, protein, targetCalories, proteinGoal,
+}: { calories: number | null; protein: number | null; targetCalories: number | null; proteinGoal: number | null }) {
+  const showCalories = targetCalories != null && targetCalories > 0;
+  const showProtein = proteinGoal != null && proteinGoal > 0;
+  if (!showCalories && !showProtein) return null;
+
+  const cal = calories ?? 0;
+  const prot = protein ?? 0;
+  const calDiff = targetCalories ? cal - targetCalories : null;
+
+  return (
+    <Card>
+      <p className="text-xs font-semibold text-zinc-500 uppercase tracking-wide mb-3">Daily targets</p>
+      <div className="flex flex-col gap-4">
+        {showCalories && (
+          <div className="flex flex-col gap-1.5">
+            <div className="flex items-center justify-between text-xs">
+              <span className="text-zinc-400 font-medium">Calories</span>
+              <span className="tabular-nums text-zinc-300">
+                {cal.toFixed(0)} / {targetCalories} kcal
+                {calDiff != null && (
+                  <span className={`ml-2 font-semibold ${calDiff > 0 ? "text-red-400" : "text-emerald-400"}`}>
+                    ({calDiff > 0 ? "+" : ""}{calDiff.toFixed(0)} kcal)
+                  </span>
+                )}
+              </span>
+            </div>
+            <ProgressBar value={cal} max={targetCalories!} color="#34d399" />
+          </div>
+        )}
+        {showProtein && (
+          <div className="flex flex-col gap-1.5">
+            <div className="flex items-center justify-between text-xs">
+              <span className="text-zinc-400 font-medium">Protein</span>
+              <span className="tabular-nums text-zinc-300">
+                {prot.toFixed(0)} / {proteinGoal} g
+                <span className={`ml-2 font-semibold ${prot >= proteinGoal! ? "text-emerald-400" : "text-zinc-500"}`}>
+                  ({prot >= proteinGoal! ? "goal met" : `${(proteinGoal! - prot).toFixed(0)}g remaining`})
+                </span>
+              </span>
+            </div>
+            <ProgressBar value={prot} max={proteinGoal!} color="#34d399" />
+          </div>
+        )}
+      </div>
+    </Card>
+  );
+}
+
 function GarminMetricCard({ label, value, unit = "" }: { label: string; value: string; unit?: string }) {
   return (
     <Card className="flex flex-col gap-2 min-h-24">
@@ -160,6 +220,8 @@ export function Today() {
     staleTime: 300_000,
   });
   const { data: readiness } = useReadiness(forDate);
+  const streakStart = addDays(forDate, -29);
+  const { data: logsData } = useDailyLogs(streakStart, addDays(forDate, -1));
   const activePhase = cutData?.phases.find((p) => !p.end_date || p.end_date >= TODAY) ?? null;
   const cutBannerDay = activePhase
     ? Math.floor((new Date().getTime() - new Date(activePhase.start_date).getTime()) / 86_400_000) + 1
@@ -225,6 +287,18 @@ export function Today() {
   } : null;
   const totalMacroKcal = macroKcal ? macroKcal.protein + macroKcal.carbs + macroKcal.fat : 0;
 
+  const logStreak = useMemo(() => {
+    const logs = logsData?.logs ?? [];
+    const logSet = new Set(logs.map(l => l.log_date));
+    let streak = 0;
+    let d = addDays(forDate, -1);
+    for (let i = 0; i < 30; i++) {
+      if (logSet.has(d)) { streak++; d = addDays(d, -1); }
+      else break;
+    }
+    return streak;
+  }, [logsData, forDate]);
+
   const rangeDays = prefs?.preferred_range_days ?? 30;
   const heatmapData = summaries.slice(-rangeDays);
   const hasGarminRecovery = Boolean(
@@ -257,6 +331,11 @@ export function Today() {
           </p>
         </div>
         <div className="flex items-center gap-2">
+          {logStreak >= 2 && (
+            <span className="text-xs font-semibold text-amber-400 bg-amber-500/10 border border-amber-700/40 px-2.5 py-1 rounded-full">
+              🔥 {logStreak}d streak
+            </span>
+          )}
           {calorieVsYesterday != null && (
             <div className="text-right mr-2">
               <p className="text-[10px] text-zinc-600 uppercase tracking-wide">vs yesterday</p>
@@ -302,6 +381,13 @@ export function Today() {
           )}
         </Link>
       )}
+
+      <TargetBarsCard
+        calories={today?.calories ?? null}
+        protein={today?.protein ?? null}
+        targetCalories={activePhase?.target_calories ?? null}
+        proteinGoal={prefs?.protein_goal_g ?? null}
+      />
 
       {/* Hero  -  ring + macros */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
