@@ -147,16 +147,14 @@ class Settings(BaseSettings):
         if self.environment != "production":
             return
 
-        missing = [
-            name
-            for name, value in {
-                "HEALTH_EXPORT_API_KEY": self.ingest_api_key,
-                "HEALTH_EXPORT_READ_API_KEY": self.read_api_key,
-                "SESSION_SECRET": self.session_secret,
-                "DASHBOARD_PASSWORD_HASH": self.dashboard_password_hash,
-            }.items()
-            if not value
-        ]
+        required = {
+            "HEALTH_EXPORT_API_KEY": self.ingest_api_key,
+            "HEALTH_EXPORT_READ_API_KEY": self.read_api_key,
+            "SESSION_SECRET": self.session_secret,
+        }
+        missing = [name for name, value in required.items() if not value]
+        if not (self.dashboard_password_hash or self.dashboard_password):
+            missing.append("DASHBOARD_PASSWORD_HASH or DASHBOARD_PASSWORD")
         if missing:
             raise ValueError(f"Production requires these settings: {', '.join(missing)}")
 

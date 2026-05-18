@@ -589,15 +589,22 @@ def test_production_requires_distinct_runtime_secrets() -> None:
     valid.validate_runtime_security()
 
 
-def test_production_requires_dashboard_password_hash() -> None:
-    with pytest.raises(ValueError, match="DASHBOARD_PASSWORD_HASH"):
+def test_production_requires_dashboard_login_secret() -> None:
+    with pytest.raises(ValueError, match="DASHBOARD_PASSWORD_HASH or DASHBOARD_PASSWORD"):
         Settings(
             environment="production",
             ingest_api_key="ingest",
             read_api_key="read",
             session_secret="session",
-            dashboard_password="plaintext-not-allowed-in-prod",
         ).validate_runtime_security()
+
+    Settings(
+        environment="production",
+        ingest_api_key="ingest",
+        read_api_key="read",
+        session_secret="session",
+        dashboard_password="plaintext-allowed-for-compatibility",
+    ).validate_runtime_security()
 
 
 def test_verify_dashboard_password_argon2() -> None:

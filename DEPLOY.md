@@ -220,7 +220,7 @@ docker compose up -d --build
 docker compose logs --tail=100 api
 ```
 
-After this hardening update, check `.env` before restarting. Production needs distinct values for `HEALTH_EXPORT_API_KEY`, `HEALTH_EXPORT_READ_API_KEY`, `SESSION_SECRET`, and `DASHBOARD_PASSWORD`; otherwise the API exits during startup with a configuration error.
+After this hardening update, check `.env` before restarting. Production needs distinct values for `HEALTH_EXPORT_API_KEY`, `HEALTH_EXPORT_READ_API_KEY`, `SESSION_SECRET`, and a dashboard login secret. `DASHBOARD_PASSWORD_HASH` is preferred, but existing deployments with `DASHBOARD_PASSWORD` still start.
 
 For a local asset check before deployment:
 
