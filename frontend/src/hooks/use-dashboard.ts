@@ -170,3 +170,13 @@ export function useReadiness(date: string) {
     enabled: !!date,
   });
 }
+
+export function useAnomalies(date: string) {
+  return useQuery({
+    queryKey: ["anomalies", date],
+    queryFn: () => api.insights.anomalies(date),
+    staleTime: 300_000,
+    refetchOnWindowFocus: false,
+    enabled: !!date,
+  });
+}

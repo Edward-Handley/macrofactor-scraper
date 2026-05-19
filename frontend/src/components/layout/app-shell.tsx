@@ -1,7 +1,10 @@
 import { Outlet } from "react-router-dom";
-import { LogOut, Zap } from "lucide-react";
+import { LogOut, Search, Zap } from "lucide-react";
 import { SidebarNav, BottomNav } from "./nav";
 import { ThemeToggle } from "./theme-toggle";
+import { DateScope } from "./date-scope";
+import { PaletteProvider } from "../command-palette/context";
+import { CommandPalette } from "../command-palette/palette";
 import { useIngestStatus } from "../../hooks/use-dashboard";
 import { useCutPhases } from "../../hooks/use-daily-log";
 import { formatShortDate, isoDate } from "../../lib/format";
@@ -36,6 +39,7 @@ function Topbar() {
         <ActivePhaseBadge />
       </div>
       <div className="flex items-center gap-2">
+        <DateScope />
         {lastSync && (
           <span className="text-xs text-zinc-500 hidden sm:block">synced {lastSync}</span>
         )}
@@ -56,9 +60,11 @@ function Topbar() {
 
 export function AppShell() {
   return (
+    <PaletteProvider>
+    <CommandPalette />
     <div className="flex h-screen flex-col md:flex-row overflow-hidden bg-zinc-950">
       <aside className="hidden md:flex flex-col w-52 border-r border-zinc-800 shrink-0 bg-zinc-950">
-        <div className="flex flex-col gap-1 px-4 py-4 border-b border-zinc-800">
+        <div className="flex flex-col gap-2 px-4 py-4 border-b border-zinc-800">
           <div className="flex items-center gap-2">
             <div className="w-7 h-7 bg-emerald-500 rounded-lg flex items-center justify-center">
               <Zap size={14} className="text-zinc-950" strokeWidth={2.5} />
@@ -66,9 +72,22 @@ export function AppShell() {
             <span className="font-semibold text-sm text-zinc-100">Health</span>
           </div>
           <ActivePhaseBadge />
+          <DateScope />
         </div>
         <SidebarNav />
-        <div className="mt-auto p-3 border-t border-zinc-800 flex items-center gap-2">
+        <div className="mt-auto p-3 border-t border-zinc-800 flex flex-col gap-2">
+          <button
+            type="button"
+            onClick={() => {
+              window.dispatchEvent(new KeyboardEvent("keydown", { key: "k", ctrlKey: true, bubbles: true }));
+            }}
+            className="w-full flex items-center gap-2 px-3 py-2 rounded-xl text-xs text-zinc-600 hover:text-zinc-400 hover:bg-zinc-800 transition-colors"
+          >
+            <Search size={13} />
+            <span>Search</span>
+            <span className="ml-auto font-mono text-[10px] text-zinc-700">⌘K</span>
+          </button>
+          <div className="flex items-center gap-2">
           <ThemeToggle />
           <form method="post" action="/logout" className="flex-1">
             <button
@@ -79,6 +98,7 @@ export function AppShell() {
               <span>Logout</span>
             </button>
           </form>
+          </div>
         </div>
       </aside>
 
@@ -96,5 +116,6 @@ export function AppShell() {
         </div>
       </div>
     </div>
+    </PaletteProvider>
   );
 }

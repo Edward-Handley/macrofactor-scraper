@@ -89,10 +89,10 @@ export function useUpdateCutPhase() {
   });
 }
 
-export function useCoachDraft(date?: string) {
+export function useCoachDraft(date?: string, kind = "check_in") {
   return useQuery({
-    queryKey: ["coach-draft", date],
-    queryFn: () => api.coach.draft(date),
+    queryKey: ["coach-draft", date, kind],
+    queryFn: () => api.coach.draft(date, kind),
     staleTime: 60_000,
   });
 }

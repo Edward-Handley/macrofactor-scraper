@@ -858,13 +858,14 @@ async def upsert_measurement(
 @app.get("/v1/coach/draft", response_model=CoachDraftResponse, dependencies=[Depends(require_private_access)])
 async def coach_draft(
     for_date: date | None = None,
+    kind: str = "check_in",
     service: HealthAutoExportService = Depends(get_health_export_service),
 ) -> CoachDraftResponse:
     from macrofactor_scraper.coach import build_coach_data, build_prompt
     import datetime as _dt
     target = for_date or _dt.date.today()
     coach_data = build_coach_data(service, target)
-    prompt_text = build_prompt(coach_data)
+    prompt_text = build_prompt(coach_data, kind=kind)
     return CoachDraftResponse(date=target.isoformat(), prompt_text=prompt_text)
 
 
@@ -875,6 +876,18 @@ async def insights_readiness(
 ) -> ReadinessReport:
     from macrofactor_scraper.analytics import readiness_for
     return readiness_for(service, record_date)
+
+
+@app.get("/v1/insights/anomalies/{record_date}", dependencies=[Depends(require_private_access)])
+async def insights_anomalies(
+    record_date: date,
+    service: HealthAutoExportService = Depends(get_health_export_service),
+) -> dict:
+    from macrofactor_scraper.insights import compute_anomalies
+    prefs = service.dashboard_preferences()
+    protein_goal = getattr(prefs, "protein_goal_g", None)
+    anomalies = compute_anomalies(service, record_date, protein_goal_g=protein_goal)
+    return {"date": record_date.isoformat(), "anomalies": [a.to_dict() for a in anomalies]}
 
 
 @app.get("/{full_path:path}")

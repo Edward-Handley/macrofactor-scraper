@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState, useMemo } from "react";
 import { CheckCircle, Ruler } from "lucide-react";
 import { useMeasurement, useMeasurements, useUpsertMeasurement } from "../hooks/use-daily-log";
-import { isoDate, offsetDate } from "../lib/format";
+import { useActiveDate } from "../hooks/use-active-date";
+import { offsetDate } from "../lib/format";
 import type { BodyMeasurement, BodyMeasurementUpsert } from "../lib/types";
 
-const TODAY = isoDate(new Date());
 const HISTORY_START = offsetDate(-90);
 
 const MEAS_FIELDS: Array<{ key: keyof BodyMeasurementUpsert; label: string; lowerIsBetter: boolean }> = [
@@ -113,7 +113,7 @@ function DeltaSummaryCard({ rows }: { rows: BodyMeasurement[] }) {
 }
 
 export function Measurements() {
-  const [date, setDate] = useState(TODAY);
+  const { date, setDate, TODAY } = useActiveDate();
   const [form, setForm] = useState<BodyMeasurementUpsert>({});
   const [saved, setSaved] = useState(false);
   const dirtyRef = useRef(false);
@@ -172,7 +172,7 @@ export function Measurements() {
         <input
           type="date"
           value={date}
-          onChange={(event) => setDate(event.target.value || TODAY)}
+          onChange={(event) => { if (event.target.value) setDate(event.target.value); }}
           className="bg-zinc-800 border border-zinc-700 rounded-xl px-3 py-2 text-sm text-zinc-100 focus:outline-none focus:ring-2 focus:ring-emerald-500"
         />
       </div>

@@ -69,7 +69,30 @@ def _scale_label(value: int | None, low: str, mid: str, high: str) -> str:
     return f"{value}/10 ({high})"
 
 
-def build_prompt(data: CoachData) -> str:
+_FRAMING_SUFFIXES: dict[str, str] = {
+    "check_in": (
+        "Based on the above, please provide your daily coaching feedback: "
+        "progress assessment, any concerns, macro/training adjustments if needed, "
+        "and key focus for today."
+    ),
+    "weekly": (
+        "Please provide a weekly review: summarise this week's progress vs targets, "
+        "identify the biggest win and the biggest gap, and set 2-3 specific targets for next week."
+    ),
+    "plateau": (
+        "Weight progress has stalled. Please diagnose potential causes from the data above "
+        "(adherence, water retention, adaptive response, miscounting) and suggest 2-3 concrete "
+        "adjustments to break the plateau. Be specific with numbers."
+    ),
+    "cut_reassess": (
+        "Please reassess the current cut phase based on the data above. "
+        "Evaluate: rate of loss vs target, muscle retention signals (protein, training quality), "
+        "recovery quality. Recommend: continue as-is, adjust calories/macros, or extend/end phase."
+    ),
+}
+
+
+def build_prompt(data: CoachData, kind: str = "check_in") -> str:
     lines: list[str] = []
 
     # Header
@@ -78,7 +101,9 @@ def build_prompt(data: CoachData) -> str:
         phase_line = f" | {data.cut_phase}"
         if data.week_number:
             phase_line += f" Week {data.week_number}"
-    lines.append(f"## Daily Check-In — {data.checkin_date.strftime('%d/%m/%Y')}{phase_line}")
+    kind_label = {"check_in": "Daily Check-In", "weekly": "Weekly Review",
+                  "plateau": "Plateau Debug", "cut_reassess": "Cut Phase Reassess"}.get(kind, "Check-In")
+    lines.append(f"## {kind_label} — {data.checkin_date.strftime('%d/%m/%Y')}{phase_line}")
     lines.append("")
 
     # Body / weight
@@ -192,11 +217,7 @@ def build_prompt(data: CoachData) -> str:
 
     # Footer prompt
     lines.append("---")
-    lines.append(
-        "Based on the above, please provide your daily coaching feedback: "
-        "progress assessment, any concerns, macro/training adjustments if needed, "
-        "and key focus for today."
-    )
+    lines.append(_FRAMING_SUFFIXES.get(kind, _FRAMING_SUFFIXES["check_in"]))
 
     return "\n".join(lines)
 

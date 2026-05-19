@@ -1,19 +1,13 @@
 import { useEffect, useRef, useState } from "react";
-import { useNavigate, useSearchParams } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 import { CheckCircle, Sun } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { ScaleSlider } from "../components/inputs/scale-slider";
 import { useDailyLog, useUpsertDailyLog } from "../hooks/use-daily-log";
 import { useDashboardSummary } from "../hooks/use-dashboard";
+import { useActiveDate } from "../hooks/use-active-date";
 import { api } from "../lib/api";
-import { isoDate, formatDdMmYyyy } from "../lib/format";
-
-function addDays(iso: string, n: number): string {
-  const [y, m, d] = iso.split("-").map(Number);
-  return new Date(Date.UTC(y, m - 1, d + n)).toISOString().slice(0, 10);
-}
-
-const TODAY = isoDate(new Date());
+import { formatDdMmYyyy } from "../lib/format";
 
 const TRAINING_TYPES = [
   { value: "upper", label: "Upper" },
@@ -77,13 +71,8 @@ function TimeInput({ label, value, onChange }: {
 
 export function Morning() {
   const navigate = useNavigate();
-  const [searchParams, setSearchParams] = useSearchParams();
-  const forDate = (() => {
-    const p = searchParams.get("date");
-    if (p && /^\d{4}-\d{2}-\d{2}$/.test(p) && p <= TODAY) return p;
-    return TODAY;
-  })();
-  const isPast = forDate < TODAY;
+  const { date: forDate, TODAY, isToday } = useActiveDate();
+  const isPast = !isToday;
 
   const { data: existing } = useDailyLog(forDate);
   const upsert = useUpsertDailyLog(forDate);
@@ -91,11 +80,6 @@ export function Morning() {
 
   const { data: summary } = useDashboardSummary(forDate, forDate);
   const latestWeight = summary?.summaries?.[0]?.weight ?? null;
-
-  function goDate(iso: string) {
-    if (iso >= TODAY) setSearchParams({});
-    else setSearchParams({ date: iso });
-  }
 
   const [amEnergy, setAmEnergy] = useState<number | null>(null);
   const [soreness, setSoreness] = useState<number | null>(null);
@@ -214,21 +198,14 @@ export function Morning() {
 
   return (
     <div className="max-w-lg mx-auto p-4 flex flex-col gap-4 pb-24">
-      <div className="flex items-center justify-between pt-2">
-        <div className="flex items-center gap-3">
-          <Sun size={20} className="text-amber-400" />
-          <div>
-            <h1 className="text-lg font-bold text-zinc-100">Morning log</h1>
-            <p className="text-xs text-zinc-500">
-              {formatDdMmYyyy(forDate)}
-              {latestWeight != null && ` — ${latestWeight.toFixed(1)} kg`}
-            </p>
-          </div>
-        </div>
-        <div className="flex items-center gap-1.5">
-          <button onClick={() => goDate(addDays(forDate, -1))} className="p-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-400 hover:text-zinc-100 transition-colors text-sm" title="Previous day">&#8592;</button>
-          <button onClick={() => goDate(addDays(forDate, 1))} disabled={forDate >= TODAY} className="p-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-400 hover:text-zinc-100 transition-colors text-sm disabled:opacity-30 disabled:cursor-not-allowed" title="Next day">&#8594;</button>
-          {isPast && <button onClick={() => goDate(TODAY)} className="px-2 py-1 rounded-lg bg-emerald-800/40 hover:bg-emerald-700/40 text-emerald-400 text-xs font-semibold transition-colors">Today</button>}
+      <div className="flex items-center gap-3 pt-2">
+        <Sun size={20} className="text-amber-400" />
+        <div>
+          <h1 className="text-lg font-bold text-zinc-100">Morning log</h1>
+          <p className="text-xs text-zinc-500">
+            {formatDdMmYyyy(forDate)}
+            {latestWeight != null && ` — ${latestWeight.toFixed(1)} kg`}
+          </p>
         </div>
       </div>
 

@@ -159,11 +159,20 @@ export const api = {
   },
 
   coach: {
-    draft: (date?: string) =>
-      request<CoachDraftResponse>(`/v1/coach/draft${date ? `?for_date=${date}` : ""}`),
+    draft: (date?: string, kind?: string) => {
+      const params = new URLSearchParams();
+      if (date) params.set("for_date", date);
+      if (kind) params.set("kind", kind);
+      const qs = params.toString();
+      return request<CoachDraftResponse>(`/v1/coach/draft${qs ? `?${qs}` : ""}`);
+    },
   },
 
   insights: {
     readiness: (date: string) => request<ReadinessReport>(`/v1/insights/readiness/${date}`),
+    anomalies: (date: string) =>
+      request<{ date: string; anomalies: Array<{ kind: string; label: string; detail: string; link_to?: string }> }>(
+        `/v1/insights/anomalies/${date}`
+      ),
   },
 };

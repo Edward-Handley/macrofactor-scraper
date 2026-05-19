@@ -6,12 +6,14 @@ import {
   Tooltip, ResponsiveContainer,
 } from "recharts";
 import { useDashboardSummary } from "../hooks/use-dashboard";
+import { useCutPhases } from "../hooks/use-daily-log";
 import { useDateRange } from "../hooks/use-date-range";
 import { TrendChart } from "../components/charts/trend-chart";
 import { FIELD_META, ALL_FIELDS } from "../lib/types";
-import { fmt, formatShortDate, minutesToDecimalHours } from "../lib/format";
+import { fmt, formatShortDate, minutesToDecimalHours, isoDate, offsetDate } from "../lib/format";
 import { api } from "../lib/api";
 import type { SummaryField, DailySummary } from "../lib/types";
+import { linearRegression, forecastTail } from "../lib/projections";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -207,6 +209,33 @@ function NutritionTab({
   downloadCSV: () => void;
 }) {
   const fields = ALL_FIELDS.filter((f) => activeFields.has(f));
+  const showingWeight = activeFields.has("weight");
+
+  // Cut phases + forecast (only when weight is visible)
+  const { data: cutData } = useCutPhases();
+  const cutPhases = showingWeight ? (cutData?.phases ?? []) : [];
+  const TODAY = isoDate();
+  const activePhase = cutPhases.find((p) => !p.end_date || p.end_date >= TODAY) ?? null;
+  const targetWeight = activePhase?.target_weight_kg ?? null;
+
+  const forecastPoints = useMemo(() => {
+    if (!showingWeight || !summaries.length) return undefined;
+    const weightPts = summaries
+      .filter(d => d.weight != null)
+      .slice(-14)
+      .map((d, i) => ({ x: i, y: d.weight! }));
+    if (weightPts.length < 3) return undefined;
+    const reg = linearRegression(weightPts);
+    if (!reg) return undefined;
+    const lastIdx = weightPts.length - 1;
+    const lastDate = summaries.filter(d => d.weight != null).slice(-1)[0]?.date;
+    if (!lastDate) return undefined;
+    const tail = forecastTail(reg, lastIdx, Math.min(30, 60));
+    return tail.slice(1).map((pt, i) => ({
+      date: offsetDate(i + 1, new Date(lastDate + "T00:00:00Z")),
+      weight_forecast: Math.round(pt.y * 10) / 10,
+    }));
+  }, [showingWeight, summaries]);
 
   const maData = useMemo(() => {
     if (!showMA || !summaries.length) return null;
@@ -308,7 +337,16 @@ function NutritionTab({
         ) : summaries.length === 0 ? (
           <p className="text-zinc-500 text-sm text-center py-16">No data for this range.</p>
         ) : (
-          <TrendChart rawData={chartData} fields={fields} maFields={showMA ? fields : []} height={320} showLegend />
+          <TrendChart
+            rawData={chartData}
+            fields={fields}
+            maFields={showMA ? fields : []}
+            height={320}
+            showLegend
+            cutPhases={cutPhases}
+            forecastPoints={forecastPoints}
+            targetWeight={targetWeight}
+          />
         )}
       </Card>
 

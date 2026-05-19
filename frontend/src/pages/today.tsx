@@ -1,16 +1,19 @@
 import { useMemo, useState } from "react";
-import { Link, useSearchParams } from "react-router-dom";
+import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Pencil } from "lucide-react";
-import { useDashboardSummary, usePreferences, useReadiness } from "../hooks/use-dashboard";
+import { useDashboardSummary, usePreferences, useReadiness, useAnomalies } from "../hooks/use-dashboard";
 import { useCutPhases, useDailyLogs } from "../hooks/use-daily-log";
+import { useActiveDate } from "../hooks/use-active-date";
+import { AnomalyStrip } from "../components/insights/anomaly-strip";
+import { linearRegression, projectDaysToTarget, forecastTail, weightRatePerWeek } from "../lib/projections";
 import { CalorieRing } from "../components/charts/calorie-ring";
 import { MacroStack } from "../components/charts/macro-stack";
 import { Sparkline } from "../components/charts/sparkline";
 import { CalendarHeatmap } from "../components/charts/calendar-heatmap";
 import { ReadinessCard } from "../components/charts/readiness-card";
 import { api } from "../lib/api";
-import { fmt, formatMinutesAsHoursMinutes, isoDate, formatShortDate, formatDdMmYyyy, deltaArrow } from "../lib/format";
+import { fmt, formatMinutesAsHoursMinutes, formatShortDate, formatDdMmYyyy, deltaArrow } from "../lib/format";
 import { FIELD_META } from "../lib/types";
 import type { DailySummary } from "../lib/types";
 
@@ -195,13 +198,7 @@ function GarminMetricCard({ label, value, unit = "" }: { label: string; value: s
 }
 
 export function Today() {
-  const [searchParams, setSearchParams] = useSearchParams();
-  const TODAY = isoDate();
-  const forDate = (() => {
-    const p = searchParams.get("date");
-    if (p && /^\d{4}-\d{2}-\d{2}$/.test(p) && p <= TODAY) return p;
-    return TODAY;
-  })();
+  const { date: forDate, TODAY } = useActiveDate();
   const end = forDate;
   const start = addDays(forDate, -89);
 
@@ -220,6 +217,7 @@ export function Today() {
     staleTime: 300_000,
   });
   const { data: readiness } = useReadiness(forDate);
+  const { data: anomaliesData } = useAnomalies(forDate);
   const streakStart = addDays(forDate, -29);
   const { data: logsData } = useDailyLogs(streakStart, addDays(forDate, -1));
   const activePhase = cutData?.phases.find((p) => !p.end_date || p.end_date >= TODAY) ?? null;
@@ -227,11 +225,6 @@ export function Today() {
     ? Math.floor((new Date().getTime() - new Date(activePhase.start_date).getTime()) / 86_400_000) + 1
     : null;
   const cutBannerWeek = cutBannerDay !== null ? Math.floor(cutBannerDay / 7) + 1 : null;
-
-  function goDate(iso: string) {
-    if (iso >= TODAY) setSearchParams({});
-    else setSearchParams({ date: iso });
-  }
 
   const summaries = summary?.summaries ?? [];
   const today = summaries.find((d) => d.date === forDate) ?? summaries.at(-1) ?? null;
@@ -301,6 +294,22 @@ export function Today() {
 
   const rangeDays = prefs?.preferred_range_days ?? 30;
   const heatmapData = summaries.slice(-rangeDays);
+
+  // Goal projection (weight, active phase with target_weight_kg)
+  const goalProjection = useMemo(() => {
+    if (!activePhase?.target_weight_kg) return null;
+    const weightPoints = summaries
+      .filter(d => d.weight != null)
+      .slice(-14)
+      .map((d, i) => ({ x: i, y: d.weight! }));
+    if (weightPoints.length < 3) return null;
+    const reg = linearRegression(weightPoints);
+    if (!reg) return null;
+    const lastIdx = weightPoints.length - 1;
+    const daysToGoal = projectDaysToTarget(reg, lastIdx, activePhase.target_weight_kg);
+    const ratePerWeek = weightRatePerWeek(reg);
+    return { daysToGoal, ratePerWeek };
+  }, [summaries, activePhase]);
   const hasGarminRecovery = Boolean(
     garminToday?.sleep_minutes != null ||
     garminToday?.sleep_score != null ||
@@ -337,30 +346,18 @@ export function Today() {
             </span>
           )}
           {calorieVsYesterday != null && (
-            <div className="text-right mr-2">
+            <div className="text-right">
               <p className="text-[10px] text-zinc-600 uppercase tracking-wide">vs yesterday</p>
               <Delta value={calorieVsYesterday} decimals={0} unit=" kcal" reversed={false} />
             </div>
           )}
-          <button
-            onClick={() => goDate(addDays(forDate, -1))}
-            className="p-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-400 hover:text-zinc-100 transition-colors text-sm"
-            title="Previous day"
-          >&#8592;</button>
-          <button
-            onClick={() => goDate(addDays(forDate, 1))}
-            disabled={forDate >= TODAY}
-            className="p-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-400 hover:text-zinc-100 transition-colors text-sm disabled:opacity-30 disabled:cursor-not-allowed"
-            title="Next day"
-          >&#8594;</button>
-          {forDate !== TODAY && (
-            <button
-              onClick={() => goDate(TODAY)}
-              className="px-2 py-1 rounded-lg bg-emerald-800/40 hover:bg-emerald-700/40 text-emerald-400 text-xs font-semibold transition-colors"
-            >Today</button>
-          )}
         </div>
       </div>
+
+      {/* Anomaly chips */}
+      {anomaliesData?.anomalies && anomaliesData.anomalies.length > 0 && (
+        <AnomalyStrip anomalies={anomaliesData.anomalies as any} />
+      )}
 
       {/* Cut phase banner */}
       {activePhase && cutBannerWeek !== null && cutBannerDay !== null && (
@@ -380,6 +377,21 @@ export function Today() {
             </span>
           )}
         </Link>
+      )}
+
+      {/* Goal projection pill */}
+      {goalProjection && (
+        <div className="flex items-center gap-2 text-xs text-zinc-400">
+          <span className="font-semibold text-emerald-400">
+            {goalProjection.daysToGoal != null
+              ? `${goalProjection.daysToGoal}d to goal`
+              : "Ahead of goal"}
+          </span>
+          <span className="text-zinc-600">at current pace</span>
+          <span className={`font-medium tabular-nums ${goalProjection.ratePerWeek < 0 ? "text-emerald-400" : "text-zinc-500"}`}>
+            ({goalProjection.ratePerWeek > 0 ? "+" : ""}{goalProjection.ratePerWeek.toFixed(2)} kg/wk)
+          </span>
+        </div>
       )}
 
       <TargetBarsCard

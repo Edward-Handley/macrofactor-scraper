@@ -1,12 +1,17 @@
 import {
   ComposedChart, Area, Line, Bar, XAxis, YAxis, CartesianGrid,
-  Tooltip, Legend, ResponsiveContainer,
+  Tooltip, Legend, ResponsiveContainer, ReferenceArea, ReferenceLine,
 } from "recharts";
-import type { DailySummary, SummaryField } from "../../lib/types";
+import type { CutPhase, DailySummary, SummaryField } from "../../lib/types";
 import { FIELD_META } from "../../lib/types";
 import { formatShortDate, fmt } from "../../lib/format";
 
 type ChartRow = Record<string, string | number | null>;
+
+interface ForecastPoint {
+  date: string;
+  weight_forecast: number;
+}
 
 interface TrendChartProps {
   /** Pre-computed rows with date + field keys (and optional <field>_ma keys) */
@@ -17,6 +22,9 @@ interface TrendChartProps {
   maFields?: SummaryField[];
   height?: number;
   showLegend?: boolean;
+  cutPhases?: CutPhase[];
+  forecastPoints?: ForecastPoint[];
+  targetWeight?: number | null;
 }
 
 interface TickProps {
@@ -81,15 +89,26 @@ export function TrendChart({
   maFields = [],
   height = 280,
   showLegend = false,
+  cutPhases,
+  forecastPoints,
+  targetWeight,
 }: TrendChartProps) {
-  const chartData: ChartRow[] = rawData
+  const historyData: ChartRow[] = rawData
     ?? (data ?? []).map(d => ({
         date: d.date,
         ...Object.fromEntries(fields.map(f => [f, d[f]])),
       }));
 
+  const chartData: ChartRow[] = forecastPoints && forecastPoints.length > 0
+    ? [
+        ...historyData,
+        ...forecastPoints.map(p => ({ date: p.date, weight_forecast: p.weight_forecast })),
+      ]
+    : historyData;
+
   const [primary, ...rest] = fields;
   const hasWeight = fields.includes("weight") && fields.length > 1;
+  const weightAxisId = hasWeight ? "right" : "left";
 
   return (
     <ResponsiveContainer width="100%" height={height}>
@@ -107,10 +126,38 @@ export function TrendChart({
             wrapperStyle={{ fontSize: 11, color: "#71717a" }}
             formatter={(v: string) => {
               if (v.endsWith("_ma")) return `${FIELD_META[v.replace("_ma", "") as SummaryField]?.label} 7d avg`;
+              if (v === "weight_forecast") return "Forecast";
               return FIELD_META[v as SummaryField]?.label ?? v;
             }}
           />
         )}
+
+        {/* Cut phase shaded bands */}
+        {cutPhases?.map((phase, i) => (
+          <ReferenceArea
+            key={i}
+            yAxisId="left"
+            x1={phase.start_date}
+            x2={phase.end_date ?? undefined}
+            fill="#10b981"
+            fillOpacity={0.04}
+            stroke="#10b981"
+            strokeOpacity={0.15}
+          />
+        ))}
+
+        {/* Target weight line */}
+        {targetWeight != null && fields.includes("weight") && (
+          <ReferenceLine
+            yAxisId={weightAxisId}
+            y={targetWeight}
+            stroke="#10b981"
+            strokeDasharray="6 3"
+            strokeOpacity={0.5}
+            label={{ value: `Target ${targetWeight}kg`, fill: "#10b981", fontSize: 10, position: "insideTopRight" }}
+          />
+        )}
+
         {primary && (
           <Area
             yAxisId="left"
@@ -128,7 +175,7 @@ export function TrendChart({
         {rest.map((f) => (
           <Line
             key={f}
-            yAxisId={f === "weight" ? (hasWeight ? "right" : "left") : "left"}
+            yAxisId={f === "weight" ? weightAxisId : "left"}
             type="monotone"
             dataKey={f}
             stroke={FIELD_META[f].color}
@@ -140,7 +187,7 @@ export function TrendChart({
         {maFields.map((f) => (
           <Line
             key={`${f}_ma`}
-            yAxisId={f === "weight" ? (hasWeight ? "right" : "left") : "left"}
+            yAxisId={f === "weight" ? weightAxisId : "left"}
             type="monotone"
             dataKey={`${f}_ma`}
             stroke={FIELD_META[f].color}
@@ -151,6 +198,21 @@ export function TrendChart({
             strokeOpacity={0.6}
           />
         ))}
+
+        {/* Forecast dashed line */}
+        {forecastPoints && forecastPoints.length > 0 && (
+          <Line
+            yAxisId={weightAxisId}
+            type="monotone"
+            dataKey="weight_forecast"
+            stroke="#10b981"
+            strokeWidth={1.5}
+            strokeDasharray="5 4"
+            dot={false}
+            connectNulls
+            strokeOpacity={0.7}
+          />
+        )}
       </ComposedChart>
     </ResponsiveContainer>
   );
