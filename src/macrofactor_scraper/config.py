@@ -3,6 +3,7 @@ from __future__ import annotations
 import hmac
 import logging
 from functools import lru_cache
+from pathlib import Path
 from typing import Literal
 
 from pydantic import AliasChoices, Field
@@ -109,6 +110,14 @@ class Settings(BaseSettings):
         default=6,
         validation_alias=AliasChoices("GARMIN_SYNC_INTERVAL_HOURS", "MACROFACTOR_GARMIN_SYNC_INTERVAL_HOURS"),
     )
+    anthropic_api_key: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("ANTHROPIC_API_KEY", "MACROFACTOR_ANTHROPIC_API_KEY"),
+    )
+
+    @property
+    def photos_dir(self) -> Path:
+        return Path(self.sqlite_path).parent / "photos"
 
     @property
     def has_garmin_credentials(self) -> bool:

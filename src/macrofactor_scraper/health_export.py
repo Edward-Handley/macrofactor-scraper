@@ -1487,6 +1487,14 @@ class HealthAutoExportService:
                     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
                 );
+                CREATE TABLE IF NOT EXISTS progress_photos (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    photo_date TEXT NOT NULL,
+                    pose TEXT NOT NULL CHECK (pose IN ('front', 'side')),
+                    size_bytes INTEGER NOT NULL,
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE (photo_date, pose)
+                );
                 CREATE INDEX IF NOT EXISTS idx_health_records_date_metric_source
                     ON health_records (record_date, metric_name, source);
                 CREATE INDEX IF NOT EXISTS idx_strong_sessions_date
@@ -1713,6 +1721,39 @@ class HealthAutoExportService:
                 )
             row = conn.execute("SELECT * FROM body_measurements WHERE measure_date = ?", (measure_date,)).fetchone()
             return dict(row)
+
+    # ─── Progress photos ─────────────────────────────────────────────────────
+
+    def record_photo(self, photo_date: str, pose: str, size_bytes: int) -> None:
+        self._ensure_schema()
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO progress_photos (photo_date, pose, size_bytes)
+                VALUES (?, ?, ?)
+                ON CONFLICT (photo_date, pose) DO UPDATE SET size_bytes = excluded.size_bytes, created_at = CURRENT_TIMESTAMP
+                """,
+                (photo_date, pose, size_bytes),
+            )
+
+    def list_photos(self) -> list[dict]:
+        self._ensure_schema()
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT photo_date, pose, size_bytes, created_at FROM progress_photos ORDER BY photo_date DESC, pose"
+            ).fetchall()
+            return [dict(r) for r in rows]
+
+    def delete_photo_record(self, photo_date: str, pose: str) -> bool:
+        self._ensure_schema()
+        with self._connect() as conn:
+            cursor = conn.execute(
+                "DELETE FROM progress_photos WHERE photo_date = ? AND pose = ?",
+                (photo_date, pose),
+            )
+            return cursor.rowcount > 0
+
+    # ─── Internal helpers ────────────────────────────────────────────────────
 
     def _insert_batch(self, conn: sqlite3.Connection, payload_hash: str, payload_json: str, headers: dict[str, str]) -> int:
         headers_json = _canonical_json(_safe_headers(headers))

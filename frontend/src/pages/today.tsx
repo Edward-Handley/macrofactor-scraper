@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Pencil } from "lucide-react";
+import { Bot, ChevronDown, ChevronUp, Pencil, RefreshCw } from "lucide-react";
 import { useDashboardSummary, usePreferences, useReadiness, useAnomalies } from "../hooks/use-dashboard";
 import { useCutPhases, useDailyLogs } from "../hooks/use-daily-log";
 import { useActiveDate } from "../hooks/use-active-date";
@@ -20,6 +20,120 @@ import type { DailySummary } from "../lib/types";
 function addDays(iso: string, n: number): string {
   const [y, m, d] = iso.split("-").map(Number);
   return new Date(Date.UTC(y, m - 1, d + n)).toISOString().slice(0, 10);
+}
+
+const AI_TYPES = [
+  { value: "quick_summary", label: "Quick Summary" },
+  { value: "weight_trend",  label: "Weight Trend"  },
+  { value: "nutrition",     label: "Nutrition"      },
+  { value: "recovery",      label: "Recovery"       },
+] as const;
+
+function SimpleMarkdown({ text }: { text: string }) {
+  const lines = text.split("\n");
+  return (
+    <div className="text-sm text-zinc-300 leading-relaxed space-y-1">
+      {lines.map((line, i) => {
+        if (line.startsWith("### ")) return <p key={i} className="font-bold text-zinc-100 mt-2">{line.slice(4)}</p>;
+        if (line.startsWith("## ")) return <p key={i} className="font-bold text-zinc-100 mt-2">{line.slice(3)}</p>;
+        if (line.startsWith("# ")) return <p key={i} className="font-bold text-zinc-100 mt-2">{line.slice(2)}</p>;
+        if (line.startsWith("- ") || line.startsWith("• ")) return <p key={i} className="pl-3 before:content-['•'] before:mr-2 before:text-zinc-500">{line.slice(2)}</p>;
+        if (line.startsWith("**") && line.endsWith("**")) return <p key={i} className="font-semibold text-zinc-100">{line.slice(2, -2)}</p>;
+        if (line.trim() === "") return <div key={i} className="h-1" />;
+        return <p key={i}>{line}</p>;
+      })}
+    </div>
+  );
+}
+
+function AiInsightCard({ forDate }: { forDate: string }) {
+  const [open, setOpen] = useState(false);
+  const [type, setType] = useState("quick_summary");
+  const [result, setResult] = useState<string | null>(null);
+  const [lastRun, setLastRun] = useState<Date | null>(null);
+  const [running, setRunning] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function runAnalysis() {
+    setRunning(true);
+    setError(null);
+    setResult(null);
+    try {
+      const res = await api.ai.analyse(type, forDate);
+      setResult(res.analysis);
+      setLastRun(new Date());
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      if (msg.includes("503")) {
+        setError("AI analysis not configured — add ANTHROPIC_API_KEY to your .env");
+      } else if (msg.includes("429")) {
+        setError("Rate limit reached — try again in a few minutes");
+      } else {
+        setError(`Analysis failed: ${msg}`);
+      }
+    } finally {
+      setRunning(false);
+    }
+  }
+
+  return (
+    <div className="bg-zinc-900 border border-zinc-800 rounded-2xl overflow-hidden">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        className="w-full flex items-center justify-between px-4 py-3 text-left hover:bg-zinc-800/40 transition-colors"
+      >
+        <div className="flex items-center gap-2">
+          <Bot size={15} className="text-violet-400" />
+          <span className="text-xs font-semibold text-zinc-500 uppercase tracking-wide">AI Insight</span>
+          {lastRun && (
+            <span className="text-[10px] text-zinc-600">
+              · last run {lastRun.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+            </span>
+          )}
+        </div>
+        {open ? <ChevronUp size={15} className="text-zinc-600" /> : <ChevronDown size={15} className="text-zinc-600" />}
+      </button>
+
+      {open && (
+        <div className="px-4 pb-4 flex flex-col gap-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <select
+              value={type}
+              onChange={(e) => setType(e.target.value)}
+              className="bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-1.5 text-sm text-zinc-100 focus:outline-none focus:ring-2 focus:ring-violet-500"
+            >
+              {AI_TYPES.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
+            </select>
+            <button
+              type="button"
+              onClick={runAnalysis}
+              disabled={running}
+              className="flex items-center gap-2 px-4 py-1.5 rounded-lg bg-violet-700 hover:bg-violet-600 text-white text-sm font-semibold disabled:opacity-50 transition-colors"
+            >
+              <RefreshCw size={13} className={running ? "animate-spin" : ""} />
+              {running ? "Analysing…" : "Run Analysis"}
+            </button>
+            <span className="text-[10px] text-zinc-600">Powered by Claude Haiku</span>
+          </div>
+
+          {error && (
+            <p className="text-sm text-red-400 bg-red-900/20 rounded-xl px-3 py-2">{error}</p>
+          )}
+
+          {result && (
+            <div className="bg-zinc-800/60 rounded-xl px-4 py-3 max-h-80 overflow-y-auto">
+              <SimpleMarkdown text={result} />
+            </div>
+          )}
+
+          {!result && !error && !running && (
+            <p className="text-xs text-zinc-600">Select an analysis type and click Run Analysis. Each run uses the Claude API.</p>
+          )}
+        </div>
+      )}
+    </div>
+  );
 }
 
 function Card({ children, className = "" }: { children: React.ReactNode; className?: string }) {
@@ -592,6 +706,8 @@ export function Today() {
           </table>
         </div>
       </Card>
+
+      <AiInsightCard forDate={forDate} />
     </div>
   );
 }

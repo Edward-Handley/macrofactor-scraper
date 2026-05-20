@@ -1,4 +1,5 @@
 import type {
+  AiAnalyseResponse,
   BodyMeasurement,
   BodyMeasurementListResponse,
   BodyMeasurementUpsert,
@@ -13,6 +14,7 @@ import type {
   DiagnosticsResponse,
   IngestStatus,
   MetricCatalogResponse,
+  PhotoListResponse,
   Preferences,
   ReadinessReport,
   RepairReport,
@@ -174,5 +176,28 @@ export const api = {
       request<{ date: string; anomalies: Array<{ kind: string; label: string; detail: string; link_to?: string }> }>(
         `/v1/insights/anomalies/${date}`
       ),
+  },
+
+  photos: {
+    list: () => request<PhotoListResponse>("/v1/photos/list"),
+    upload: (date: string, pose: string, file: File) => {
+      const body = new FormData();
+      body.append("file", file);
+      return request<{ date: string; pose: string; size_bytes: number }>(
+        `/v1/photos/${date}?pose=${encodeURIComponent(pose)}`,
+        { method: "POST", body }
+      );
+    },
+    url: (date: string, pose: string) => `/v1/photos/${date}/${pose}`,
+    delete: (date: string, pose: string) =>
+      request<{ deleted: boolean }>(`/v1/photos/${date}/${pose}`, { method: "DELETE" }),
+  },
+
+  ai: {
+    analyse: (type: string, date?: string) =>
+      request<AiAnalyseResponse>("/v1/ai/analyse", {
+        method: "POST",
+        body: JSON.stringify({ type, date }),
+      }),
   },
 };
