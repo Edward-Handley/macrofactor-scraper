@@ -37,7 +37,8 @@ macrofactor-scraper/
 │   ├── api.py              ← FastAPI app, all endpoints
 │   ├── health_export.py    ← Core service: ingest, aggregation, diagnostics, repair
 │   ├── garmin.py           ← Garmin Connect sync: extractors, GarminSyncService, background loop
-│   ├── coach.py            ← Coach prompt builder; uses Garmin as authoritative sleep/steps/RHR/HRV source
+│   ├── coach.py            ← Coach prompt builder; build_prompt(kind=) for 4 framing types
+│   ├── insights.py         ← Anomaly detection rules engine (HRV/RHR z-score, steps, protein, etc.)
 │   ├── models.py           ← Pydantic models for all responses
 │   ├── config.py           ← Settings (reads .env)
 │   ├── repair.py           ← CLI for retroactive cleanup of stacked rows
@@ -50,25 +51,38 @@ macrofactor-scraper/
 │   │   ├── routes.tsx      ← createBrowserRouter with all routes
 │   │   ├── index.css       ← Tailwind v4 + CSS color tokens
 │   │   ├── lib/
-│   │   │   ├── api.ts      ← Typed fetch client for all /v1 endpoints
-│   │   │   ├── types.ts    ← All TS interfaces + FIELD_META + ALL_FIELDS
-│   │   │   ├── format.ts   ← fmt, compact, isoDate, offsetDate, etc.
-│   │   │   └── utils.ts    ← cn() helper
+│   │   │   ├── api.ts          ← Typed fetch client for all /v1 endpoints
+│   │   │   ├── types.ts        ← All TS interfaces + FIELD_META + ALL_FIELDS
+│   │   │   ├── format.ts       ← fmt, compact, isoDate, offsetDate, etc.
+│   │   │   ├── projections.ts  ← linearRegression, projectDaysToTarget, forecastTail
+│   │   │   ├── coach-history.ts ← IndexedDB prompt history via idb-keyval
+│   │   │   └── utils.ts        ← cn() helper
 │   │   ├── hooks/
-│   │   │   ├── use-dashboard.ts   ← React Query hooks for all API calls
-│   │   │   ├── use-date-range.ts  ← Syncs start/end to URL search params
-│   │   │   └── use-theme.ts       ← localStorage dark/light toggle
+│   │   │   ├── use-dashboard.ts      ← React Query hooks for all API calls
+│   │   │   ├── use-active-date.ts    ← Syncs ?date= URL param across all pages
+│   │   │   ├── use-date-range.ts     ← Syncs start/end to URL search params
+│   │   │   ├── use-register-actions.ts ← Registers page actions in command palette
+│   │   │   └── use-theme.ts          ← localStorage dark/light toggle
 │   │   ├── components/
-│   │   │   ├── layout/     ← app-shell.tsx, nav.tsx, theme-toggle.tsx
-│   │   │   └── charts/     ← calorie-ring.tsx, macro-stack.tsx, sparkline.tsx,
-│   │   │                       trend-chart.tsx, calendar-heatmap.tsx
+│   │   │   ├── layout/     ← app-shell.tsx, nav.tsx, theme-toggle.tsx, date-scope.tsx
+│   │   │   ├── charts/     ← calorie-ring.tsx, macro-stack.tsx, sparkline.tsx,
+│   │   │   │                   trend-chart.tsx (+ cut-phase bands + forecast), calendar-heatmap.tsx,
+│   │   │   │                   readiness-card.tsx (+ action hints per band)
+│   │   │   ├── command-palette/ ← context.tsx + palette.tsx (cmdk + chrono-node date jump)
+│   │   │   └── insights/   ← anomaly-strip.tsx (chip row on Today page)
 │   │   └── pages/
-│   │       ├── today.tsx       ← Hero page with ring, macros, stats, heatmap
+│   │       ├── today.tsx       ← Hero page: ring, macros, progress bars, anomaly strip, projection pill, heatmap
+│   │       ├── week.tsx        ← Weekly scorecard with A/B/C grades vs targets
 │   │       ├── health.tsx      ← Garmin health tab: all metrics, sparklines, sync button
-│   │       ├── trends.tsx      ← Time-series charts with field toggles
+│   │       ├── trends.tsx      ← Time-series charts with cut-phase overlays + forecast
+│   │       ├── cut-phases.tsx  ← Diet phases + weight trajectory chart + days-to-goal
+│   │       ├── measurements.tsx ← Body measurements + delta summary card
+│   │       ├── coach.tsx       ← Framing chips, context preview, prompt history sidebar
+│   │       ├── morning.tsx     ← Morning log with Garmin auto-prefill
+│   │       ├── evening.tsx     ← Evening log
 │   │       ├── data-health.tsx ← Suspicious days + repair + metric catalog
-│   │       ├── explorer.tsx    ← API data explorer (see details below)
-│   │       └── settings.tsx    ← Dashboard preferences
+│   │       ├── explorer.tsx    ← API data explorer
+│   │       └── settings.tsx    ← Dashboard preferences (+ protein goal)
 │   ├── package.json
 │   ├── vite.config.ts      ← Proxies /v1 → localhost:8000, builds to static/dashboard
 │   └── tsconfig.json       ← target ES2022
@@ -83,12 +97,19 @@ macrofactor-scraper/
 
 | Path | Page | What it shows |
 |------|------|---------------|
-| `/` | Today | Calorie ring, macro bars, calorie split %, yesterday delta, rolling averages, heatmap, 14-day table; **prev/next day nav via `?date=`** |
+| `/` | Today | Calorie ring, macro bars, calorie/protein progress bars vs targets, anomaly strip (HRV/RHR z-score, steps percentile, protein gap, log streak, weight retention, Strong PRs), days-to-goal projection pill (14d linear regression), yesterday delta, rolling averages, heatmap, 14-day table; **prev/next day nav via `?date=` synced across all pages via `useActiveDate`** |
 | `/health` | Health | All Garmin metrics (recovery / wellness / training / activity), date picker, sync button (session-auth), 30-day sparklines |
-| `/trends` | Trends | Field toggles, range presets, per-field stats (avg/min/max/slope), optional 7d MA overlay, CSV export |
+| `/trends` | Trends | Field toggles, range presets, per-field stats (avg/min/max/slope), optional 7d MA overlay, cut-phase ReferenceArea bands, 30d weight forecast dashed line, CSV export |
+| `/week` | Week | Weekly scorecard — per-day calorie/protein/steps logged vs targets, grades A/B/C |
+| `/workouts` | Workouts | Strong workout analytics (weekly load, group balance, exercise PRs) |
+| `/measurements` | Measurements | Body measurements history + delta summary card (prev/total change per field) |
+| `/cut-phases` | Cut Phases | Diet phase tracking, weight trajectory LineChart with target line + days-to-goal estimate |
+| `/coach` | Coach | Framing chips (check-in / weekly / plateau / cut-reassess), context preview accordion, IndexedDB prompt history sidebar, anomalies auto-appended; "Copy + Open Claude" button |
+| `/morning` | Morning Log | Daily log form — auto-prefills RHR/HRV/sleep_hours from Garmin with 'Garmin' badge |
+| `/evening` | Evening Log | Daily log form — subjective scores (AM energy, soreness, etc.) |
 | `/data-health` | Data Health | Suspicious days (>5000 kcal), inline diagnostics, one-click repair, metric catalog with trust toggles |
 | `/explorer` | Explorer | Dataset picker, sort/filter/paginate (50/page), column visibility, per-column stats, CSV export |
-| `/settings` | Settings | Visible summary cards, default chart fields, preferred range, reset |
+| `/settings` | Settings | Visible summary cards, default chart fields, preferred range, protein goal (g), reset |
 
 ---
 
@@ -122,6 +143,10 @@ GET  /v1/garmin/categories
 GET  /v1/garmin/series/{metric_name}?days=30
 GET  /v1/garmin/debug/{YYYY-MM-DD}              ← session auth
 GET  /v1/diagnostics/weight/{YYYY-MM-DD}        ← shows all weight rows for date (source/timestamp/qty)
+
+# Insights + Coach
+GET  /v1/insights/anomalies/{YYYY-MM-DD}        ← anomaly rules engine result for a date
+GET  /v1/coach/draft?kind=checkin|weekly|plateau|cut_reassess  ← framed prompt draft
 
 GET  /{any-other-path}                          ← SPA catch-all → dashboard.html
 ```
@@ -203,6 +228,39 @@ Defined in `frontend/src/index.css` as CSS custom properties (`--color-calories`
 | `useRepair()` mutation | invalidates dashboard-summary + diagnostics |
 | `useGarminCategories()` | `["garmin-categories"]` — staleTime Infinity |
 | `useGarminSeries(metric, days)` | `["garmin-series", metric, days]` |
+| `useAnomalies(date)` | `["anomalies", date]` |
+| `useCoachDraft(kind, date)` | `["coach-draft", kind, date]` |
+
+### DateScope + useActiveDate
+
+`DateScope` (in `components/layout/date-scope.tsx`) renders prev/next/now navigation. Mounted in both the desktop sidebar and mobile topbar. Uses `useActiveDate` hook which reads/writes the `?date=` URL search param — all pages (Today, Morning, Evening, Coach, Measurements) consume this same param so navigating dates stays in sync across tabs.
+
+### Command palette
+
+`Ctrl/Cmd-K` opens `components/command-palette/palette.tsx` (built on `cmdk`). Supports:
+- Route navigation by name
+- Natural-language date jump via `chrono-node` (e.g. "yesterday", "last Monday")
+- Registered page actions via `useRegisterActions` hook
+
+Context (`components/command-palette/context.tsx`) stores the action registry.
+
+### Anomaly strip
+
+`components/insights/anomaly-strip.tsx` renders a horizontal row of chips on the Today page. Data comes from `GET /v1/insights/anomalies/{date}` (backend: `insights.py`). Rules checked:
+- HRV z-score vs 30-day baseline
+- RHR z-score vs 30-day baseline
+- Steps percentile vs 30-day baseline
+- Protein gap vs protein goal
+- Log streak (consecutive logged days)
+- Weight retention flag
+- Strong PRs from today's workout
+
+### Projections
+
+`lib/projections.ts` provides three helpers used by Today and Trends:
+- `linearRegression(points)` — least-squares fit
+- `projectDaysToTarget(weights, targetKg)` — days until target weight at current trajectory
+- `forecastTail(weights, days)` — extends the regression line N days for the dashed forecast on Trends
 
 ### TrendChart
 
@@ -210,7 +268,10 @@ Defined in `frontend/src/index.css` as CSS custom properties (`--color-calories`
 - `rawData: ChartRow[]` — pre-computed rows (used by Trends page which adds `field_ma` keys for the 7d moving average)
 - `data: DailySummary[]` — legacy simple path
 
-The `maFields` prop adds dashed overlay lines for moving averages.
+The `maFields` prop adds dashed overlay lines for moving averages. When the weight field is selected, Trends automatically overlays:
+- `ReferenceArea` bands for each cut phase (from `/v1/cut-phases`)
+- A `ReferenceLine` at target weight
+- A dashed forecast line from `forecastTail`
 
 ### Explorer page features
 
@@ -296,6 +357,16 @@ curl -H "X-API-Key: $HEALTH_EXPORT_API_KEY" \
 
 Look at `extracted.*` and `payloads.*.numeric_matches`. If a value appears at an unexpected path, add it to the relevant `_extract_*` function and add a test in `tests/test_garmin.py`.
 
+### Coach prompt framing kinds
+
+`coach.py` `build_prompt(kind=)` accepts four framing types:
+- `checkin` (default) — standard daily check-in suffix
+- `weekly` — weekly progress review framing
+- `plateau` — plateau-busting analysis framing
+- `cut_reassess` — cut phase reassessment framing
+
+`GET /v1/coach/draft?kind=<kind>` exposes this to the frontend. The Coach page renders four chips that set the kind and regenerate the draft. Detected anomalies from `GET /v1/insights/anomalies/{date}` are automatically appended to the prompt context.
+
 ### Garmin as authoritative source in coach prompt
 
 `coach.py` `build_coach_data()` queries `health_records` for Garmin metrics for yesterday via `_get_garmin_values(service, date)`. Priority:
@@ -316,12 +387,12 @@ Look at `extracted.*` and `payloads.*.numeric_matches`. If a value appears at an
 - **Garmin backfill**: `sync_recent(days=2)` only covers today + yesterday. To backfill history, loop `garmin.sync_date(d, service)` over a date range manually or add a backfill endpoint.
 - **Historical step data**: `garmin_steps` now maps to `steps` with source priority (Garmin > Apple Health), but days before Garmin integration was active still show Apple Health steps. A backfill endpoint that syncs `garmin_steps` for a date range would fix historical charts.
 - **Health tab long-range charts**: Current sparklines are 30 days. Could add date-range picker for longer history.
-- **Weekly/monthly aggregation view**: Trends shows daily; no weekly rollup chart.
 - **Food-level detail**: Not possible — Apple Health only stores nutrient totals, not individual food items.
 - **Auth improvement**: Currently a single shared password. No multi-user support.
-- **Code splitting**: The JS bundle is ~830 KB (recharts + react-router). Vite warns about this. Could lazy-load route components.
+- **Code splitting**: The JS bundle is large (recharts + react-router + cmdk + chrono-node). Could lazy-load route components.
 - **Mobile date picker UX**: Native `<input type="date">` works but is ugly on iOS Safari.
 - **Notifications**: No alerting when a suspicious day is detected.
+- **Photo comparison**: Body photo upload and side-by-side comparison view (held back due to VPS resource constraints — 1 vCPU / 1 GB RAM / 25 GB disk on $6 DO droplet).
 
 ---
 

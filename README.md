@@ -21,17 +21,18 @@ FastAPI backend + React dashboard for nutrition tracking and Garmin biometrics, 
 
 | Route | Purpose |
 |-------|---------|
-| `/` | Today — calorie ring, macros, stats, 30-day heatmap, Garmin recovery cards |
+| `/` | Today — calorie ring, macros, progress bars vs targets, anomaly strip, days-to-goal pill, 30-day heatmap, Garmin recovery cards |
 | `/health` | All Garmin metrics with 30-day sparklines, date picker, manual sync |
-| `/trends` | Time-series charts with field toggles + 7d moving average overlay |
+| `/trends` | Time-series charts with field toggles, 7d MA overlay, cut-phase bands, 30d weight forecast |
+| `/week` | Weekly scorecard — daily grades (A/B/C) vs calorie/protein/steps targets |
 | `/workouts` | Strong workout analytics (weekly load, group balance, exercise PRs) |
-| `/measurements` | Body measurements history |
-| `/cut-phases` | Diet phase tracking |
-| `/coach` | AI coaching prompt |
-| `/morning` `/evening` | Daily log forms |
+| `/measurements` | Body measurements history with delta summary card |
+| `/cut-phases` | Diet phase tracking with weight trajectory chart and days-to-goal estimate |
+| `/coach` | AI coaching prompt — framing chips, context preview, prompt history, anomaly auto-append |
+| `/morning` `/evening` | Daily log forms (morning pre-fills RHR/HRV/sleep from Garmin) |
 | `/data-health` | Data quality diagnostics + one-click repair |
 | `/explorer` | Raw metric explorer (sort / filter / paginate / CSV export) |
-| `/settings` | Dashboard preferences |
+| `/settings` | Dashboard preferences including protein goal |
 
 ## Garmin metrics
 
@@ -182,6 +183,9 @@ GET  /v1/garmin/values/{YYYY-MM-DD}
 GET  /v1/garmin/categories
 GET  /v1/garmin/series/{metric_name}?days=30
 GET  /v1/garmin/debug/{YYYY-MM-DD}                    ingest key
+
+GET  /v1/insights/anomalies/{YYYY-MM-DD}
+GET  /v1/coach/draft?kind=checkin|weekly|plateau|cut_reassess
 ```
 
 All `/v1` read endpoints require `X-API-Key: <HEALTH_EXPORT_READ_API_KEY>` or a dashboard session cookie.
@@ -214,12 +218,22 @@ src/macrofactor_scraper/
   api.py            — all FastAPI endpoints
   health_export.py  — ingest, aggregation, diagnostics, upsert_garmin_metric
   garmin.py         — Garmin extractors, GarminSyncService, background loop
+  coach.py          — coach prompt builder, framing kinds, build_prompt(kind=)
+  insights.py       — anomaly detection rules engine
   models.py         — Pydantic response models
   config.py         — Settings from .env
 
 frontend/src/
+  pages/today.tsx        — main dashboard (anomaly strip, progress bars, projection pill)
+  pages/week.tsx         — weekly scorecard with A/B/C grades
+  pages/coach.tsx        — coach page (framing chips, prompt history, anomaly append)
   pages/health.tsx       — Garmin health tab
-  pages/today.tsx        — main dashboard
+  components/command-palette/ — Ctrl/Cmd-K command palette (cmdk + chrono-node)
+  components/insights/anomaly-strip.tsx — HRV/RHR/steps/protein anomaly chips
+  components/layout/date-scope.tsx — prev/next/now date navigator widget
+  hooks/use-active-date.ts — syncs ?date= URL param across all pages
+  lib/projections.ts     — linear regression, days-to-goal, forecast tail
+  lib/coach-history.ts   — IndexedDB prompt history (idb-keyval)
   lib/api.ts             — typed fetch client
   hooks/use-dashboard.ts — React Query hooks
 
