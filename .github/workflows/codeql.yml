@@ -1,0 +1,54 @@
+name: "CodeQL Security Analysis"
+
+# Runs on every push to main, every PR targeting main, and weekly.
+# The weekly schedule catches new CodeQL queries even when code hasn't changed.
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+  schedule:
+    # Weekly Monday 06:00 UTC = 14:00 AWST
+    - cron: "0 6 * * 1"
+
+jobs:
+  analyze:
+    name: Analyze (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    permissions:
+      security-events: write   # required: upload SARIF results
+      packages: read            # required: pull CodeQL packs
+      actions: read
+      contents: read
+
+    strategy:
+      fail-fast: false
+      matrix:
+        # 'javascript-typescript' covers both the React frontend (TypeScript)
+        # and any JS tooling. 'python' covers the FastAPI backend.
+        language: [ "python", "javascript-typescript" ]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: ${{ matrix.language }}
+          # 'security-and-quality' catches:
+          #   Python: SQL injection (critical given raw SQLite usage), path traversal,
+          #           command injection, insecure deserialisation, weak crypto
+          #   TS/JS:  XSS, prototype pollution, unsafe eval, DOM injection
+          queries: security-and-quality
+
+      # CodeQL autobuild handles both pip (pyproject.toml) and npm (frontend/)
+      - name: Autobuild
+        uses: github/codeql-action/autobuild@v3
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:${{ matrix.language }}"

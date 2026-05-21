@@ -1,0 +1,62 @@
+name: "Bandit Python Security Scan"
+
+# Bandit is a Python-specific static analyser. Unlike CodeQL's interprocedural
+# analysis, Bandit is fast and flags common insecure patterns inline:
+#   B608 — SQL injection via string concatenation (critical for this project:
+#           raw SQLite, no ORM, parameterisation must be verified manually)
+#   B105/B106/B107 — hardcoded passwords / test credentials
+#   B501–B510 — weak TLS/SSL configuration
+#   B324 — use of weak hashing (MD5, SHA1) — relevant given password hashing via argon2
+#
+# Running both Bandit AND CodeQL gives complementary coverage.
+
+on:
+  push:
+    branches: [ "main" ]
+    paths:
+      - "src/**/*.py"
+      - "pyproject.toml"
+      - ".github/workflows/bandit.yml"
+  pull_request:
+    branches: [ "main" ]
+    paths:
+      - "src/**/*.py"
+
+jobs:
+  bandit:
+    name: Bandit SAST
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    permissions:
+      contents: read
+      security-events: write   # upload SARIF to GitHub Security tab
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Bandit with SARIF output support
+        run: pip install bandit[sarif]
+
+      - name: Run Bandit
+        # Scan only the application source (not tests).
+        # -ll = report medium and high severity only (low = too noisy for a personal project).
+        # --exit-zero so the workflow doesn't fail hard — findings go to the Security tab instead.
+        run: |
+          bandit -r src/macrofactor_scraper \
+            -ll \
+            --format sarif \
+            --output bandit-results.sarif \
+            --exit-zero
+
+      - name: Upload SARIF to GitHub Security tab
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: bandit-results.sarif
+          category: bandit

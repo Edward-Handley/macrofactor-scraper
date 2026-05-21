@@ -1,0 +1,92 @@
+# Dependabot version update configuration
+# Docs: https://docs.github.com/en/code-security/dependabot/dependabot-version-updates/configuration-options-for-the-dependabot.yml-file
+#
+# This repo has three dependency ecosystems:
+#   - pip: Python backend (pyproject.toml) — FastAPI, garminconnect, argon2-cffi, anthropic, etc.
+#   - npm: React frontend (frontend/package.json) — React 18, Vite, TypeScript, Tailwind v4, Recharts, etc.
+#   - github-actions: CI/CD workflows (.github/workflows/)
+
+version: 2
+updates:
+  # ── Python backend ────────────────────────────────────────────────────────────
+  - package-ecosystem: "pip"
+    directory: "/"                     # pyproject.toml is at repo root
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "Australia/Perth"
+    open-pull-requests-limit: 10
+    labels:
+      - "dependencies"
+      - "python"
+    commit-message:
+      prefix: "deps(python)"
+      include: "scope"
+    groups:
+      # Keep minor/patch updates together — only major bumps get their own PR
+      python-minor-patch:
+        update-types:
+          - "minor"
+          - "patch"
+    # Security-only PRs for these sensitive packages should always come through immediately
+    # (Dependabot security updates are separate from version updates and always enabled)
+
+  # ── React / Node frontend ─────────────────────────────────────────────────────
+  - package-ecosystem: "npm"
+    directory: "/frontend"             # package.json lives in frontend/
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "Australia/Perth"
+    open-pull-requests-limit: 10
+    labels:
+      - "dependencies"
+      - "javascript"
+    commit-message:
+      prefix: "deps(frontend)"
+      prefix-development: "deps-dev(frontend)"
+      include: "scope"
+    groups:
+      # Group Vite + Tailwind + tooling devDeps together to reduce PR noise
+      frontend-tooling:
+        patterns:
+          - "vite"
+          - "@vitejs/*"
+          - "tailwindcss"
+          - "typescript"
+          - "@types/*"
+          - "eslint*"
+          - "@eslint/*"
+        update-types:
+          - "minor"
+          - "patch"
+      # Group React ecosystem together
+      react-ecosystem:
+        patterns:
+          - "react"
+          - "react-dom"
+          - "@types/react*"
+          - "react-query"
+          - "@tanstack/*"
+          - "recharts"
+        update-types:
+          - "minor"
+          - "patch"
+
+  # ── GitHub Actions ────────────────────────────────────────────────────────────
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "Australia/Perth"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "github-actions"
+    commit-message:
+      prefix: "ci"
+      include: "scope"

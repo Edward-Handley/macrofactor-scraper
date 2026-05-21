@@ -21,3 +21,48 @@ repair_backups/
 *.db-*
 *.csv
 tmp_pytest*/
+
+
+# ============================================================
+# Security additions — appended as part of B20 hardening
+# ============================================================
+# The existing .gitignore already excludes .env, *.sqlite3, *.db, *.csv.
+# The additions below cover credential types that are specific to this
+# project's threat model: Garmin OAuth tokens, Anthropic API keys,
+# SSH keys (used for VPS deployment), and local Docker overrides.
+# ============================================================
+
+# Garmin OAuth token store (garth library caches tokens here by default)
+garmin_tokens/
+.garth/
+garmin_tokens
+
+# Any local Docker Compose override (may contain real env values)
+docker-compose.override.yml
+docker-compose.local.yml
+
+# Private keys and certificates (used for VPS SSH access, TLS)
+*.pem
+*.key
+*.p12
+*.pfx
+id_rsa
+id_rsa.*
+id_ed25519
+id_ed25519.*
+*.ppk
+
+# Cloud / service credentials that should never be in the repo
+.aws/
+gcloud-key*.json
+service-account*.json
+*-credentials.json
+
+# Editor history files that can contain previously typed secret values
+.history/
+.idea/workspace.xml
+
+# Python test artefacts with potentially sensitive fixture data
+# (already excluded by tmp_pytest* but belt-and-braces for named dirs)
+test_output/
+test_data/*.sqlite3
