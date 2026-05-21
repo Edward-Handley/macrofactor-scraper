@@ -565,3 +565,23 @@ export interface ReadinessReport {
   band: "green" | "amber" | "red" | null;
   summary: string;
 }
+
+// - Progress photos -
+
+export interface PhotoDateEntry {
+  date: string;
+  poses: string[];
+}
+
+export interface PhotoListResponse {
+  count: number;
+  dates: PhotoDateEntry[];
+}
+
+// - AI analysis -
+
+export interface AiAnalyseResponse {
+  analysis: string;
+  model: string;
+  tokens_used: number;
+}

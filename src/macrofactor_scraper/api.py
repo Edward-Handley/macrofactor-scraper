@@ -15,8 +15,8 @@ from hashlib import sha256
 from pathlib import Path
 from urllib.parse import parse_qs
 
-from fastapi import Depends, FastAPI, File, Header, HTTPException, Request, Response, UploadFile
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi import Depends, FastAPI, File, Header, HTTPException, Query, Request, Response, UploadFile
+from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from macrofactor_scraper.config import Settings, get_settings
@@ -51,6 +51,10 @@ from macrofactor_scraper.models import (
     StrongImportResponse,
     StrongSessionListResponse,
     StrongSessionRecord,
+    AiAnalyseRequest,
+    AiAnalyseResponse,
+    PhotoListResponse,
+    PhotoDateEntry,
     StrongSummaryResponse,
     WorkoutListResponse,
     _row_to_cut_phase,
@@ -888,6 +892,121 @@ async def insights_anomalies(
     protein_goal = getattr(prefs, "protein_goal_g", None)
     anomalies = compute_anomalies(service, record_date, protein_goal_g=protein_goal)
     return {"date": record_date.isoformat(), "anomalies": [a.to_dict() for a in anomalies]}
+
+
+PHOTO_MAX_BYTES = 15 * 1024 * 1024
+VALID_POSES = {"front", "side"}
+
+
+def _get_photos_dir(settings: Settings) -> Path:
+    d = settings.photos_dir
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def _photo_path(photos_dir: Path, photo_date: str, pose: str) -> Path:
+    return photos_dir / f"{photo_date}_{pose}.jpg"
+
+
+@app.post("/v1/photos/{photo_date}", dependencies=[Depends(require_private_access)])
+async def upload_photo(
+    photo_date: str,
+    pose: str = Query(...),
+    file: UploadFile = File(...),
+    service: HealthAutoExportService = Depends(get_health_export_service),
+    settings: Settings = Depends(get_settings),
+) -> dict:
+    if pose not in VALID_POSES:
+        raise HTTPException(status_code=400, detail=f"pose must be one of {sorted(VALID_POSES)}")
+    data = await file.read(PHOTO_MAX_BYTES + 1)
+    if len(data) > PHOTO_MAX_BYTES:
+        raise HTTPException(status_code=413, detail="Photo exceeds 15 MB limit")
+
+    try:
+        from PIL import Image
+        import io as _io
+        img = Image.open(_io.BytesIO(data))
+        img = img.convert("RGB")
+        if img.width > 1400 or img.height > 1400:
+            img.thumbnail((1400, 1400), Image.LANCZOS)
+        buf = _io.BytesIO()
+        img.save(buf, format="JPEG", quality=82, optimize=True)
+        compressed = buf.getvalue()
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Invalid image: {exc}") from exc
+
+    photos_dir = _get_photos_dir(settings)
+    dest = _photo_path(photos_dir, photo_date, pose)
+    dest.write_bytes(compressed)
+    service.record_photo(photo_date, pose, len(compressed))
+    return {"date": photo_date, "pose": pose, "size_bytes": len(compressed)}
+
+
+@app.get("/v1/photos/{photo_date}/{pose}")
+async def serve_photo(
+    photo_date: str,
+    pose: str,
+    request: Request,
+    settings: Settings = Depends(get_settings),
+) -> FileResponse:
+    if not _verify_session(request.cookies.get(SESSION_COOKIE_NAME), settings):
+        raise HTTPException(status_code=401, detail="Authentication required")
+    if pose not in VALID_POSES:
+        raise HTTPException(status_code=404, detail="Not found")
+    photos_dir = _get_photos_dir(settings)
+    path = _photo_path(photos_dir, photo_date, pose)
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="Photo not found")
+    return FileResponse(path, media_type="image/jpeg")
+
+
+@app.get("/v1/photos/list", response_model=PhotoListResponse, dependencies=[Depends(require_private_access)])
+async def list_photos(
+    service: HealthAutoExportService = Depends(get_health_export_service),
+) -> PhotoListResponse:
+    rows = service.list_photos()
+    by_date: dict[str, list[str]] = {}
+    for row in rows:
+        by_date.setdefault(row["photo_date"], []).append(row["pose"])
+    dates = [PhotoDateEntry(date=d, poses=poses) for d, poses in sorted(by_date.items(), reverse=True)]
+    return PhotoListResponse(count=len(dates), dates=dates)
+
+
+@app.delete("/v1/photos/{photo_date}/{pose}", dependencies=[Depends(require_private_access)])
+async def delete_photo(
+    photo_date: str,
+    pose: str,
+    service: HealthAutoExportService = Depends(get_health_export_service),
+    settings: Settings = Depends(get_settings),
+) -> dict:
+    if pose not in VALID_POSES:
+        raise HTTPException(status_code=404, detail="Not found")
+    photos_dir = _get_photos_dir(settings)
+    path = _photo_path(photos_dir, photo_date, pose)
+    if path.exists():
+        path.unlink()
+    deleted = service.delete_photo_record(photo_date, pose)
+    if not deleted and not path.exists():
+        raise HTTPException(status_code=404, detail="Photo not found")
+    return {"deleted": True, "date": photo_date, "pose": pose}
+
+
+@app.post("/v1/ai/analyse", response_model=AiAnalyseResponse, dependencies=[Depends(require_private_access)])
+async def ai_analyse(
+    body: AiAnalyseRequest,
+    service: HealthAutoExportService = Depends(get_health_export_service),
+    settings: Settings = Depends(get_settings),
+) -> AiAnalyseResponse:
+    if not settings.anthropic_api_key:
+        raise HTTPException(status_code=503, detail="AI analysis not configured — set ANTHROPIC_API_KEY")
+    from macrofactor_scraper.ai import run_analysis, check_rate_limit, RateLimitError
+    try:
+        check_rate_limit()
+    except RateLimitError as exc:
+        raise HTTPException(status_code=429, detail=str(exc)) from exc
+    analysis_date = date.fromisoformat(body.date) if body.date else date.today()
+    result = await run_analysis(service, analysis_date, body.type, settings.anthropic_api_key)
+    return AiAnalyseResponse(**result)
 
 
 @app.get("/{full_path:path}")

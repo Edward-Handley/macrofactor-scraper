@@ -728,3 +728,28 @@ class ReadinessReport(BaseModel):
     score: float | None = None
     band: str | None = None
     summary: str
+
+
+# ─── Progress photos ──────────────────────────────────────────────────────────
+
+class PhotoDateEntry(BaseModel):
+    date: str
+    poses: list[str]
+
+
+class PhotoListResponse(BaseModel):
+    count: int
+    dates: list[PhotoDateEntry]
+
+
+# ─── AI analysis ─────────────────────────────────────────────────────────────
+
+class AiAnalyseRequest(BaseModel):
+    type: str = "quick_summary"
+    date: str | None = None
+
+
+class AiAnalyseResponse(BaseModel):
+    analysis: str
+    model: str
+    tokens_used: int

@@ -7,7 +7,7 @@ import { useDailyLog, useUpsertDailyLog } from "../hooks/use-daily-log";
 import { useDashboardSummary } from "../hooks/use-dashboard";
 import { useActiveDate } from "../hooks/use-active-date";
 import { api } from "../lib/api";
-import { formatDdMmYyyy } from "../lib/format";
+import { formatDdMmYyyy, offsetDate, fmt } from "../lib/format";
 
 const TRAINING_TYPES = [
   { value: "upper", label: "Upper" },
@@ -80,6 +80,10 @@ export function Morning() {
 
   const { data: summary } = useDashboardSummary(forDate, forDate);
   const latestWeight = summary?.summaries?.[0]?.weight ?? null;
+
+  const YESTERDAY = offsetDate(-1, new Date(forDate + "T00:00:00Z"));
+  const { data: yesterdaySummary } = useDashboardSummary(YESTERDAY, YESTERDAY);
+  const yest = yesterdaySummary?.summaries?.[0] ?? null;
 
   const [amEnergy, setAmEnergy] = useState<number | null>(null);
   const [soreness, setSoreness] = useState<number | null>(null);
@@ -212,6 +216,16 @@ export function Morning() {
       {isPast && (
         <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-amber-900/30 border border-amber-800/50 text-amber-300 text-xs font-medium">
           Editing past day — {formatDdMmYyyy(forDate)}
+        </div>
+      )}
+
+      {yest && (yest.steps != null || yest.calories != null || yest.protein != null || yest.active_energy != null) && (
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2.5 rounded-xl bg-zinc-800/60 border border-zinc-700/50 text-xs text-zinc-400">
+          <span className="font-semibold text-zinc-500">Yesterday</span>
+          {yest.steps != null && <span><span className="text-zinc-200 font-semibold">{fmt(yest.steps, 0)}</span> steps</span>}
+          {yest.calories != null && <span><span className="text-zinc-200 font-semibold">{fmt(yest.calories, 0)}</span> kcal</span>}
+          {yest.protein != null && <span>P <span className="text-zinc-200 font-semibold">{fmt(yest.protein, 0)}g</span></span>}
+          {yest.active_energy != null && <span><span className="text-zinc-200 font-semibold">{fmt(yest.active_energy, 0)}</span> active</span>}
         </div>
       )}
 
