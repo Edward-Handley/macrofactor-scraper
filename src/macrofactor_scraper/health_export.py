@@ -1740,7 +1740,10 @@ class HealthAutoExportService:
         self._ensure_schema()
         with self._connect() as conn:
             rows = conn.execute(
-                "SELECT photo_date, pose, size_bytes, created_at FROM progress_photos ORDER BY photo_date DESC, pose"
+                """SELECT p.photo_date, p.pose, p.size_bytes, p.created_at, d.weight_kg
+                   FROM progress_photos p
+                   LEFT JOIN daily_logs d ON d.log_date = p.photo_date
+                   ORDER BY p.photo_date DESC, p.pose"""
             ).fetchall()
             return [dict(r) for r in rows]
 

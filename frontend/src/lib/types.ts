@@ -571,6 +571,7 @@ export interface ReadinessReport {
 export interface PhotoDateEntry {
   date: string;
   poses: string[];
+  weight_kg: number | null;
 }
 
 export interface PhotoListResponse {

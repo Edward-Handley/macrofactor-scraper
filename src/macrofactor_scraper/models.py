@@ -735,6 +735,7 @@ class ReadinessReport(BaseModel):
 class PhotoDateEntry(BaseModel):
     date: str
     poses: list[str]
+    weight_kg: float | None = None
 
 
 class PhotoListResponse(BaseModel):

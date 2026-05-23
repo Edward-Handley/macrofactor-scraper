@@ -72,7 +72,6 @@ function DropZone({
         ref={inputRef}
         type="file"
         accept="image/*"
-        capture="environment"
         className="hidden"
         onChange={(e) => { const f = e.target.files?.[0]; if (f) onFile(f); }}
       />
@@ -139,6 +138,9 @@ function CompareGrid({
                 )}
                 <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent px-2 py-1.5">
                   <span className="text-[10px] text-zinc-300">{formatDdMmYyyy(entry.date)}</span>
+                  {entry.weight_kg != null && (
+                    <span className="text-[10px] text-emerald-400 ml-1.5">{entry.weight_kg.toFixed(1)} kg</span>
+                  )}
                 </div>
               </div>
             ))}
@@ -383,7 +385,12 @@ export function Photos() {
               )}
               <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/90 to-transparent px-2 py-2">
                 <p className="text-[11px] font-semibold text-zinc-200">{formatDdMmYyyy(entry.date)}</p>
-                <p className="text-[10px] text-zinc-500">{entry.poses.join(" + ")}</p>
+                <p className="text-[10px] text-zinc-500">
+                  {entry.poses.join(" + ")}
+                  {entry.weight_kg != null && (
+                    <span className="ml-1.5 text-emerald-400">{entry.weight_kg.toFixed(1)} kg</span>
+                  )}
+                </p>
               </div>
             </div>
           ))}
@@ -393,7 +400,12 @@ export function Photos() {
         {selectedEntry && (
           <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4 flex flex-col gap-3">
             <div className="flex items-center justify-between">
-              <h3 className="text-sm font-semibold text-zinc-100">{formatDdMmYyyy(selectedEntry.date)}</h3>
+              <div>
+                <h3 className="text-sm font-semibold text-zinc-100">{formatDdMmYyyy(selectedEntry.date)}</h3>
+                {selectedEntry.weight_kg != null && (
+                  <p className="text-xs text-emerald-400 mt-0.5">{selectedEntry.weight_kg.toFixed(1)} kg</p>
+                )}
+              </div>
               <button type="button" onClick={() => setSelectedDate(null)} className="text-zinc-600 hover:text-zinc-400">
                 <X size={15} />
               </button>

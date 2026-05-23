@@ -966,9 +966,14 @@ async def list_photos(
 ) -> PhotoListResponse:
     rows = service.list_photos()
     by_date: dict[str, list[str]] = {}
+    weight_by_date: dict[str, float | None] = {}
     for row in rows:
         by_date.setdefault(row["photo_date"], []).append(row["pose"])
-    dates = [PhotoDateEntry(date=d, poses=poses) for d, poses in sorted(by_date.items(), reverse=True)]
+        weight_by_date[row["photo_date"]] = row.get("weight_kg")
+    dates = [
+        PhotoDateEntry(date=d, poses=poses, weight_kg=weight_by_date.get(d))
+        for d, poses in sorted(by_date.items(), reverse=True)
+    ]
     return PhotoListResponse(count=len(dates), dates=dates)
 
 
