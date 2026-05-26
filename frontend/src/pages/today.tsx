@@ -2,7 +2,7 @@ import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Bot, ChevronDown, ChevronUp, Pencil, RefreshCw } from "lucide-react";
-import { useDashboardSummary, usePreferences, useReadiness, useAnomalies } from "../hooks/use-dashboard";
+import { useDashboardSummary, usePreferences, useReadiness, useAnomalies, useTrainingCall, useRefeedSuggestion } from "../hooks/use-dashboard";
 import { useCutPhases, useDailyLogs } from "../hooks/use-daily-log";
 import { useActiveDate } from "../hooks/use-active-date";
 import { AnomalyStrip } from "../components/insights/anomaly-strip";
@@ -12,6 +12,8 @@ import { MacroStack } from "../components/charts/macro-stack";
 import { Sparkline } from "../components/charts/sparkline";
 import { CalendarHeatmap } from "../components/charts/calendar-heatmap";
 import { ReadinessCard } from "../components/charts/readiness-card";
+import { TrainingCallCard } from "../components/insights/training-call-card";
+import { RefeedCard } from "../components/insights/refeed-card";
 import { api } from "../lib/api";
 import { fmt, formatMinutesAsHoursMinutes, formatShortDate, formatDdMmYyyy, deltaArrow } from "../lib/format";
 import { FIELD_META } from "../lib/types";
@@ -332,6 +334,8 @@ export function Today() {
   });
   const { data: readiness } = useReadiness(forDate);
   const { data: anomaliesData } = useAnomalies(forDate);
+  const { data: trainingCall } = useTrainingCall(forDate);
+  const { data: refeedSuggestion } = useRefeedSuggestion(forDate);
   const streakStart = addDays(forDate, -29);
   const { data: logsData } = useDailyLogs(streakStart, addDays(forDate, -1));
   const activePhase = cutData?.phases.find((p) => !p.end_date || p.end_date >= TODAY) ?? null;
@@ -617,6 +621,14 @@ export function Today() {
 
       {hasGarminRecovery && readiness && (
         <ReadinessCard report={readiness} />
+      )}
+
+      {trainingCall && (
+        <TrainingCallCard data={trainingCall} date={forDate} />
+      )}
+
+      {refeedSuggestion?.should_refeed && (
+        <RefeedCard data={refeedSuggestion} />
       )}
 
       {/* Averages strip */}

@@ -150,3 +150,130 @@ async def run_analysis(
         "model": "claude-haiku-4-5-20251001",
         "tokens_used": tokens_used,
     }
+
+
+def _build_weekly_snapshot(service: "HealthAutoExportService", week_start: date) -> str:
+    week_end = week_start + timedelta(days=6)
+    summaries = service.dashboard_summary(week_start, week_end).summaries
+    logs = service.get_daily_logs(week_start, week_end)
+    logs_by_date = {lg["log_date"]: lg for lg in logs}
+
+    lines: list[str] = [f"=== Weekly Snapshot ({week_start.isoformat()} – {week_end.isoformat()}) ===\n"]
+    weights, cals, proteins, sleeps, hrvs = [], [], [], [], []
+    gym_days = 0
+    for s in sorted(summaries, key=lambda x: x.date):
+        d = s.date.isoformat()
+        lg = logs_by_date.get(d, {})
+        parts: list[str] = [d]
+        if s.weight is not None:
+            parts.append(f"weight={s.weight:.1f}kg")
+            weights.append(s.weight)
+        if s.calories is not None:
+            parts.append(f"cal={s.calories:.0f}")
+            cals.append(s.calories)
+        if s.protein is not None:
+            parts.append(f"P={s.protein:.0f}g")
+            proteins.append(s.protein)
+        if s.steps is not None:
+            parts.append(f"steps={s.steps:.0f}")
+        if lg.get("hrv_overnight") is not None:
+            parts.append(f"HRV={lg['hrv_overnight']}ms")
+            hrvs.append(float(lg["hrv_overnight"]))
+        if lg.get("rhr") is not None:
+            parts.append(f"RHR={lg['rhr']}bpm")
+        if lg.get("sleep_hours") is not None:
+            parts.append(f"sleep={lg['sleep_hours']}h")
+            sleeps.append(float(lg["sleep_hours"]))
+        if lg.get("am_energy") is not None:
+            parts.append(f"AM_energy={lg['am_energy']}/10")
+        if lg.get("gym_done"):
+            gym_days += 1
+            if lg.get("gym_rpe") is not None:
+                parts.append(f"RPE={lg['gym_rpe']}")
+        if lg.get("training_type"):
+            parts.append(f"training={lg['training_type']}")
+        lines.append("  ".join(parts))
+
+    lines.append("")
+    lines.append("=== Week Averages ===")
+    if weights:
+        lines.append(f"Avg weight: {sum(weights)/len(weights):.1f} kg")
+    if cals:
+        lines.append(f"Avg calories: {sum(cals)/len(cals):.0f} kcal")
+    if proteins:
+        lines.append(f"Avg protein: {sum(proteins)/len(proteins):.0f} g")
+    if sleeps:
+        lines.append(f"Avg sleep: {sum(sleeps)/len(sleeps):.1f} h")
+    if hrvs:
+        lines.append(f"Avg HRV: {sum(hrvs)/len(hrvs):.0f} ms")
+    lines.append(f"Training sessions: {gym_days}")
+
+    return "\n".join(lines)
+
+
+async def generate_weekly_recap(
+    service: "HealthAutoExportService",
+    week_start: date,
+    api_key: str,
+) -> dict:
+    snapshot = await asyncio.to_thread(_build_weekly_snapshot, service, week_start)
+    week_end = week_start + timedelta(days=6)
+
+    cut_context: str | None = None
+    active_phase = service.get_active_cut_phase()
+    if active_phase:
+        cut_context = f"Active cut phase: {active_phase['name']}"
+        if active_phase.get("target_calories"):
+            cut_context += f", target {active_phase['target_calories']} kcal/day"
+
+    prompt = (
+        "You are a concise, data-driven health coach writing a weekly recap journal entry. "
+        "Respond in plain markdown with NO headers — just flowing prose paragraphs. "
+        "Keep it under 200 words. Be specific with numbers. Be encouraging but honest.\n"
+    )
+    if cut_context:
+        prompt += f"Context: {cut_context}\n"
+    prompt += f"\n{snapshot}\n\n---\n"
+    prompt += (
+        "Write a 3–4 sentence weekly narrative covering: overall progress this week, "
+        "standout wins or concerns, and one concrete focus for next week. "
+        "Then on a new line output a JSON array of 3–5 short highlight strings "
+        "(e.g. [\"Hit protein 6/7 days\", \"Best HRV all month\"]). "
+        "Format: narrative text THEN a line starting with ```json followed by the array."
+    )
+
+    import anthropic
+    client = anthropic.Anthropic(api_key=api_key)
+    response = await asyncio.to_thread(
+        lambda: client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=600,
+            messages=[{"role": "user", "content": prompt}],
+        )
+    )
+    raw = response.content[0].text if response.content else ""
+    tokens_used = (response.usage.input_tokens or 0) + (response.usage.output_tokens or 0)
+
+    # Split narrative from highlights JSON block
+    narrative = raw
+    highlights: list[str] = []
+    if "```json" in raw:
+        parts = raw.split("```json", 1)
+        narrative = parts[0].strip()
+        json_block = parts[1].split("```")[0].strip()
+        try:
+            import json
+            parsed = json.loads(json_block)
+            if isinstance(parsed, list):
+                highlights = [str(h) for h in parsed]
+        except Exception:
+            pass
+
+    return {
+        "week_start_date": week_start.isoformat(),
+        "week_end_date": week_end.isoformat(),
+        "narrative": narrative,
+        "highlights": highlights,
+        "model": "claude-haiku-4-5-20251001",
+        "tokens_used": tokens_used,
+    }

@@ -1,14 +1,92 @@
 import { useState, useMemo } from "react";
 import { LineChart, Line, XAxis, YAxis, Tooltip, ReferenceLine, ResponsiveContainer } from "recharts";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCutPhases, useCreateCutPhase, useUpdateCutPhase } from "../hooks/use-daily-log";
 import { useDashboardSummary } from "../hooks/use-dashboard";
 import type { CutPhase, CutPhaseCreate } from "../lib/types";
 import { isoDate } from "../lib/format";
+import { api } from "../lib/api";
+import { TrendingDown, TrendingUp, Minus, Check } from "lucide-react";
 
 const TODAY = isoDate();
 
 function phaseIsActive(p: CutPhase) {
   return p.end_date === null || p.end_date >= TODAY;
+}
+
+function DriftCard({ phase }: { phase: CutPhase }) {
+  const qc = useQueryClient();
+  const { data, isLoading } = useQuery({
+    queryKey: ["cut-phase-drift", phase.id],
+    queryFn: () => api.cutPhases.drift(phase.id),
+    staleTime: 300_000,
+    enabled: phase.target_weight_kg != null,
+  });
+
+  const applyMut = useMutation({
+    mutationFn: (kcal: number) =>
+      api.cutPhases.update(phase.id, { target_calories: kcal }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["cut-phases"] });
+      qc.invalidateQueries({ queryKey: ["cut-phase-drift", phase.id] });
+    },
+  });
+
+  if (isLoading) return null;
+  if (!data || data.actual_rate_kg_week == null) return null;
+
+  const actualSign = data.actual_rate_kg_week < 0 ? "" : "+";
+  const expectedSign = data.expected_rate_kg_week != null && data.expected_rate_kg_week < 0 ? "" : "+";
+  const onTrack = data.divergence_pct != null && data.divergence_pct <= 30;
+
+  return (
+    <div className="mt-3 pt-3 border-t border-zinc-800">
+      <div className="flex items-center justify-between mb-2">
+        <p className="text-xs font-semibold text-zinc-500 uppercase tracking-wide">Rate vs plan</p>
+        {onTrack ? (
+          <span className="flex items-center gap-1 text-[10px] font-bold text-emerald-400">
+            <Check size={10} /> On track
+          </span>
+        ) : (
+          <span className="text-[10px] font-bold text-amber-400">
+            {data.divergence_pct?.toFixed(0)}% off plan
+          </span>
+        )}
+      </div>
+      <div className="grid grid-cols-2 gap-3 text-xs mb-3">
+        <div>
+          <p className="text-zinc-600 mb-0.5">Actual (14d)</p>
+          <p className="font-semibold text-zinc-200">{actualSign}{data.actual_rate_kg_week.toFixed(2)} kg/wk</p>
+        </div>
+        {data.expected_rate_kg_week != null && (
+          <div>
+            <p className="text-zinc-600 mb-0.5">Plan target</p>
+            <p className="font-semibold text-zinc-200">{expectedSign}{data.expected_rate_kg_week.toFixed(2)} kg/wk</p>
+          </div>
+        )}
+      </div>
+      {data.suggested_target_calories != null && !onTrack && (
+        <div className="flex items-center gap-3 p-3 bg-amber-500/10 border border-amber-700/30 rounded-xl">
+          <div className="flex-1">
+            <p className="text-xs font-semibold text-amber-400 mb-0.5">Suggested target</p>
+            <p className="text-sm font-bold text-zinc-100">{data.suggested_target_calories} kcal</p>
+            <p className="text-[10px] text-zinc-500">
+              {data.suggested_target_calories > (data.current_target_calories ?? 0) ? "+" : ""}
+              {(data.suggested_target_calories - (data.current_target_calories ?? 0))} from current
+            </p>
+          </div>
+          <button
+            onClick={() => applyMut.mutate(data.suggested_target_calories!)}
+            disabled={applyMut.isPending}
+            className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-amber-500 text-zinc-950 hover:bg-amber-400 transition-colors disabled:opacity-50"
+          >
+            {applyMut.isPending ? "…" : "Apply"}
+          </button>
+        </div>
+      )}
+      <p className="text-[10px] text-zinc-700 mt-1">{data.days_evaluated} weigh-ins evaluated · {Math.round(data.confidence * 100)}% confidence</p>
+    </div>
+  );
 }
 
 function PhaseProgressChart({ phase }: { phase: CutPhase }) {
@@ -128,6 +206,7 @@ function PhaseCard({ phase, onEdit }: { phase: CutPhase; onEdit: (p: CutPhase) =
       )}
       {phase.notes && <p className="text-xs text-zinc-500">{phase.notes}</p>}
       {active && phase.target_weight_kg && <PhaseProgressChart phase={phase} />}
+      {active && <DriftCard phase={phase} />}
     </div>
   );
 }

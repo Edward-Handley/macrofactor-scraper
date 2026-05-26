@@ -5,6 +5,7 @@ import { ThemeToggle } from "./theme-toggle";
 import { DateScope } from "./date-scope";
 import { PaletteProvider } from "../command-palette/context";
 import { CommandPalette } from "../command-palette/palette";
+import { InstallPrompt } from "./install-prompt";
 import { useIngestStatus } from "../../hooks/use-dashboard";
 import { useCutPhases } from "../../hooks/use-daily-log";
 import { formatShortDate, isoDate } from "../../lib/format";
@@ -62,6 +63,7 @@ export function AppShell() {
   return (
     <PaletteProvider>
     <CommandPalette />
+    <InstallPrompt />
     <div className="flex h-screen flex-col md:flex-row overflow-hidden bg-zinc-950">
       <aside className="hidden md:flex flex-col w-52 border-r border-zinc-800 shrink-0 bg-zinc-950">
         <div className="flex flex-col gap-2 px-4 py-4 border-b border-zinc-800">

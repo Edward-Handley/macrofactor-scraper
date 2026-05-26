@@ -180,3 +180,23 @@ export function useAnomalies(date: string) {
     enabled: !!date,
   });
 }
+
+export function useTrainingCall(date: string) {
+  return useQuery({
+    queryKey: ["training-call", date],
+    queryFn: () => api.insights.trainingCall(date),
+    staleTime: 300_000,
+    refetchOnWindowFocus: false,
+    enabled: !!date,
+  });
+}
+
+export function useRefeedSuggestion(date: string) {
+  return useQuery({
+    queryKey: ["refeed-suggestion", date],
+    queryFn: () => api.insights.refeedSuggestion(date),
+    staleTime: 300_000,
+    refetchOnWindowFocus: false,
+    enabled: !!date,
+  });
+}

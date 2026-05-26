@@ -134,6 +134,17 @@ export const api = {
       request<CutPhase>("/v1/cut-phases", { method: "POST", body: JSON.stringify(data) }),
     update: (id: number, data: Partial<CutPhaseCreate>) =>
       request<CutPhase>(`/v1/cut-phases/${id}`, { method: "PUT", body: JSON.stringify(data) }),
+    drift: (id: number) =>
+      request<{
+        actual_rate_kg_week: number | null;
+        expected_rate_kg_week: number | null;
+        suggested_target_calories: number | null;
+        confidence: number;
+        days_evaluated: number;
+        divergence_pct: number | null;
+        current_target_calories: number | null;
+        message?: string;
+      }>(`/v1/cut-phases/${id}/drift`),
   },
 
   garmin: {
@@ -176,6 +187,19 @@ export const api = {
       request<{ date: string; anomalies: Array<{ kind: string; label: string; detail: string; link_to?: string }> }>(
         `/v1/insights/anomalies/${date}`
       ),
+    trainingCall: (date: string) =>
+      request<{ date: string; call: string; reasons: string[]; confidence: number }>(
+        `/v1/insights/training-call/${date}`
+      ),
+    refeedSuggestion: (date: string) =>
+      request<{
+        should_refeed: boolean;
+        reasons: string[];
+        suggested_kcal_bump: number;
+        suggested_kcal_target: number | null;
+        suggested_days: number;
+        days_into_cut: number;
+      }>(`/v1/insights/refeed-suggestion/${date}`),
   },
 
   photos: {
@@ -200,4 +224,27 @@ export const api = {
         body: JSON.stringify({ type, date }),
       }),
   },
+
+  streaks: {
+    list: () => request<{ streaks: Array<{ key: string; label: string; current: number; longest: number; milestone_next: number }> }>("/v1/streaks"),
+  },
+
+  badges: {
+    list: () => request<{ badges: Array<{ key: string; label: string; description: string; icon: string; category: string; earned: boolean }>; earned_count: number; total: number }>("/v1/badges"),
+  },
+
+  weeklyRecap: {
+    list: () => request<{ recaps: WeeklyRecap[] }>("/v1/weekly-recap/list"),
+    get: (weekStart: string) => request<WeeklyRecap>(`/v1/weekly-recap/${weekStart}`),
+    regenerate: (weekStart: string) => request<WeeklyRecap>(`/v1/weekly-recap/${weekStart}/regenerate`, { method: "POST" }),
+  },
 };
+
+export interface WeeklyRecap {
+  week_start_date: string;
+  narrative: string;
+  highlights: string[];
+  model: string;
+  tokens_used: number;
+  created_at: string;
+}

@@ -114,6 +114,22 @@ class Settings(BaseSettings):
         default=None,
         validation_alias=AliasChoices("ANTHROPIC_API_KEY", "MACROFACTOR_ANTHROPIC_API_KEY"),
     )
+    vapid_public_key: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("VAPID_PUBLIC_KEY", "MACROFACTOR_VAPID_PUBLIC_KEY"),
+    )
+    vapid_private_key: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("VAPID_PRIVATE_KEY", "MACROFACTOR_VAPID_PRIVATE_KEY"),
+    )
+    vapid_contact: str = Field(
+        default="admin@example.com",
+        validation_alias=AliasChoices("VAPID_CONTACT", "MACROFACTOR_VAPID_CONTACT"),
+    )
+
+    @property
+    def has_push_configured(self) -> bool:
+        return bool(self.vapid_public_key and self.vapid_private_key)
 
     @property
     def photos_dir(self) -> Path:

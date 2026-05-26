@@ -1473,6 +1473,7 @@ class HealthAutoExportService:
                     notes TEXT,
                     weight_kg REAL,
                     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    is_refeed INTEGER NOT NULL DEFAULT 0,
                     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
                 );
                 CREATE TABLE IF NOT EXISTS body_measurements (
@@ -1495,6 +1496,21 @@ class HealthAutoExportService:
                     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                     UNIQUE (photo_date, pose)
                 );
+                CREATE TABLE IF NOT EXISTS push_subscriptions (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    endpoint TEXT NOT NULL UNIQUE,
+                    p256dh TEXT NOT NULL,
+                    auth TEXT NOT NULL,
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                );
+                CREATE TABLE IF NOT EXISTS weekly_recaps (
+                    week_start_date TEXT PRIMARY KEY,
+                    narrative TEXT NOT NULL,
+                    highlights_json TEXT NOT NULL DEFAULT '[]',
+                    model TEXT NOT NULL,
+                    tokens_used INTEGER NOT NULL DEFAULT 0,
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                );
                 CREATE INDEX IF NOT EXISTS idx_health_records_date_metric_source
                     ON health_records (record_date, metric_name, source);
                 CREATE INDEX IF NOT EXISTS idx_strong_sessions_date
@@ -1507,6 +1523,11 @@ class HealthAutoExportService:
             dl_cols = {c["name"] for c in conn.execute("PRAGMA table_info(daily_logs)").fetchall()}
             if "weight_kg" not in dl_cols:
                 conn.execute("ALTER TABLE daily_logs ADD COLUMN weight_kg REAL")
+            if "is_refeed" not in dl_cols:
+                conn.execute("ALTER TABLE daily_logs ADD COLUMN is_refeed INTEGER NOT NULL DEFAULT 0")
+            recap_cols = {c["name"] for c in conn.execute("PRAGMA table_info(weekly_recaps)").fetchall()}
+            if not recap_cols:
+                pass  # table created fresh above
         self._initialized = True
 
     # ─── Garmin metric upsert ────────────────────────────────────────────────
@@ -1755,6 +1776,84 @@ class HealthAutoExportService:
                 (photo_date, pose),
             )
             return cursor.rowcount > 0
+
+    # ─── Push subscriptions ──────────────────────────────────────────────────
+
+    def upsert_push_subscription(self, endpoint: str, p256dh: str, auth: str) -> None:
+        self._ensure_schema()
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO push_subscriptions (endpoint, p256dh, auth)
+                VALUES (?, ?, ?)
+                ON CONFLICT(endpoint) DO UPDATE SET p256dh = excluded.p256dh, auth = excluded.auth
+                """,
+                (endpoint, p256dh, auth),
+            )
+
+    def delete_push_subscription(self, endpoint: str) -> bool:
+        self._ensure_schema()
+        with self._connect() as conn:
+            cursor = conn.execute("DELETE FROM push_subscriptions WHERE endpoint = ?", (endpoint,))
+            return cursor.rowcount > 0
+
+    def delete_push_subscription_by_id(self, sub_id: int) -> None:
+        self._ensure_schema()
+        with self._connect() as conn:
+            conn.execute("DELETE FROM push_subscriptions WHERE id = ?", (sub_id,))
+
+    def get_push_subscriptions(self) -> list[dict]:
+        self._ensure_schema()
+        with self._connect() as conn:
+            rows = conn.execute("SELECT id, endpoint, p256dh, auth FROM push_subscriptions").fetchall()
+            return [dict(r) for r in rows]
+
+    # ─── Weekly recaps ───────────────────────────────────────────────────────
+
+    def upsert_weekly_recap(self, week_start_date: str, narrative: str, highlights: list, model: str, tokens_used: int) -> None:
+        self._ensure_schema()
+        highlights_json = json.dumps(highlights)
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO weekly_recaps (week_start_date, narrative, highlights_json, model, tokens_used, created_at)
+                VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                ON CONFLICT(week_start_date) DO UPDATE SET
+                    narrative = excluded.narrative,
+                    highlights_json = excluded.highlights_json,
+                    model = excluded.model,
+                    tokens_used = excluded.tokens_used,
+                    created_at = excluded.created_at
+                """,
+                (week_start_date, narrative, highlights_json, model, tokens_used),
+            )
+
+    def get_weekly_recap(self, week_start_date: str) -> dict | None:
+        self._ensure_schema()
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT week_start_date, narrative, highlights_json, model, tokens_used, created_at FROM weekly_recaps WHERE week_start_date = ?",
+                (week_start_date,),
+            ).fetchone()
+            if not row:
+                return None
+            r = dict(row)
+            r["highlights"] = json.loads(r.pop("highlights_json", "[]"))
+            return r
+
+    def list_weekly_recaps(self, limit: int = 52) -> list[dict]:
+        self._ensure_schema()
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT week_start_date, narrative, highlights_json, model, tokens_used, created_at FROM weekly_recaps ORDER BY week_start_date DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+            result = []
+            for row in rows:
+                r = dict(row)
+                r["highlights"] = json.loads(r.pop("highlights_json", "[]"))
+                result.append(r)
+            return result
 
     # ─── Internal helpers ────────────────────────────────────────────────────
 

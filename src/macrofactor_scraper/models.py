@@ -743,6 +743,15 @@ class PhotoListResponse(BaseModel):
     dates: list[PhotoDateEntry]
 
 
+# ─── Training readiness call ──────────────────────────────────────────────────
+
+class TrainingCall(BaseModel):
+    date: str
+    call: str  # "push" | "maintain" | "deload" | "rest"
+    reasons: list[str]
+    confidence: float
+
+
 # ─── AI analysis ─────────────────────────────────────────────────────────────
 
 class AiAnalyseRequest(BaseModel):

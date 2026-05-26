@@ -16,6 +16,7 @@ from pathlib import Path
 from urllib.parse import parse_qs
 
 from fastapi import Depends, FastAPI, File, Header, HTTPException, Query, Request, Response, UploadFile
+from pydantic import BaseModel
 from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -79,6 +80,114 @@ _LOGIN_FAILURES: defaultdict[str, deque[float]] = defaultdict(deque)
 _LOGIN_LOCKOUTS: dict[str, float] = {}
 
 
+async def _notification_scheduler(app: FastAPI) -> None:
+    """Fire morning (06:30) and evening (20:30) push notifications daily."""
+    import datetime as _dt
+    from macrofactor_scraper.notifications import send_push
+
+    sent_morning: str | None = None
+    sent_evening: str | None = None
+
+    while True:
+        try:
+            await asyncio.sleep(60)
+            settings = get_settings()
+            if not settings.has_push_configured:
+                continue
+            service: HealthAutoExportService = app.state.health_export_service
+            now = _dt.datetime.now()
+            today = now.strftime("%Y-%m-%d")
+
+            if now.hour == 6 and now.minute == 30 and sent_morning != today:
+                sent_morning = today
+                await asyncio.get_event_loop().run_in_executor(
+                    None,
+                    lambda: send_push(
+                        service,
+                        "Good morning!",
+                        "Time to log your morning check-in.",
+                        "/morning",
+                        vapid_private_key=settings.vapid_private_key,  # type: ignore[arg-type]
+                        vapid_contact=settings.vapid_contact,
+                    ),
+                )
+
+            if now.hour == 20 and now.minute == 30 and sent_evening != today:
+                log_row = service.get_daily_log(today)
+                if log_row and not log_row.get("pm_energy"):
+                    sent_evening = today
+                    await asyncio.get_event_loop().run_in_executor(
+                        None,
+                        lambda: send_push(
+                            service,
+                            "Evening check-in",
+                            "Don't forget to fill in your evening log.",
+                            "/evening",
+                            vapid_private_key=settings.vapid_private_key,  # type: ignore[arg-type]
+                            vapid_contact=settings.vapid_contact,
+                        ),
+                    )
+        except asyncio.CancelledError:
+            return
+        except Exception as exc:  # noqa: BLE001
+            import logging
+            logging.getLogger(__name__).warning("Notification scheduler error: %s", exc)
+
+
+async def _weekly_recap_scheduler(app: FastAPI) -> None:
+    """Generate weekly recap every Sunday at 19:00 local time."""
+    import datetime as _dt
+
+    generated: str | None = None
+
+    while True:
+        try:
+            await asyncio.sleep(60)
+            settings = get_settings()
+            if not settings.anthropic_api_key:
+                continue
+            now = _dt.datetime.now()
+            # Sunday = weekday 6, fire at 19:00
+            if now.weekday() != 6 or now.hour != 19 or now.minute != 0:
+                continue
+            week_start = (now - _dt.timedelta(days=6)).strftime("%Y-%m-%d")
+            if generated == week_start:
+                continue
+            generated = week_start
+            service: HealthAutoExportService = app.state.health_export_service
+            from macrofactor_scraper.ai import generate_weekly_recap
+            result = await generate_weekly_recap(
+                service,
+                _dt.date.fromisoformat(week_start),
+                settings.anthropic_api_key,
+            )
+            service.upsert_weekly_recap(
+                result["week_start_date"],
+                result["narrative"],
+                result["highlights"],
+                result["model"],
+                result["tokens_used"],
+            )
+            if settings.has_push_configured:
+                from macrofactor_scraper.notifications import send_push
+                await asyncio.get_event_loop().run_in_executor(
+                    None,
+                    lambda: send_push(
+                        service,
+                        "Your weekly recap is ready",
+                        "See how your week went — open the app to read it.",
+                        "/week",
+                        vapid_private_key=settings.vapid_private_key,  # type: ignore[arg-type]
+                        vapid_contact=settings.vapid_contact,
+                    ),
+                )
+        except asyncio.CancelledError:
+            return
+        except Exception as exc:  # noqa: BLE001
+            import logging
+            logging.getLogger(__name__).warning("Weekly recap scheduler error: %s", exc)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # Start Garmin background sync if credentials configured
@@ -96,9 +205,19 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         _garmin_task = asyncio.create_task(
             garmin_sync_loop(app, interval_hours=settings.garmin_sync_interval_hours)
         )
+    _notif_task = None
+    if settings.has_push_configured:
+        _notif_task = asyncio.create_task(_notification_scheduler(app))
+    _recap_task = None
+    if settings.anthropic_api_key:
+        _recap_task = asyncio.create_task(_weekly_recap_scheduler(app))
     yield
     if _garmin_task is not None:
         _garmin_task.cancel()
+    if _notif_task is not None:
+        _notif_task.cancel()
+    if _recap_task is not None:
+        _recap_task.cancel()
     service = getattr(app.state, "health_export_service", None)
     if service is not None:
         service.close()
@@ -114,6 +233,7 @@ app = FastAPI(
     openapi_url=None if APP_SETTINGS.environment == "production" else "/openapi.json",
 )
 app.mount("/assets", StaticFiles(directory=FRONTEND_DIR / "assets", check_dir=False), name="dashboard-assets")
+app.mount("/icons", StaticFiles(directory=FRONTEND_DIR / "icons", check_dir=False), name="dashboard-icons")
 
 
 def get_health_export_service(settings: Settings = Depends(get_settings)) -> HealthAutoExportService:
@@ -791,6 +911,17 @@ async def update_cut_phase(
     return _row_to_cut_phase(row)
 
 
+@app.get("/v1/cut-phases/{phase_id}/drift", dependencies=[Depends(require_private_access)])
+async def cut_phase_drift(
+    phase_id: int,
+    service: HealthAutoExportService = Depends(get_health_export_service),
+) -> dict:
+    from macrofactor_scraper.analytics import evaluate_cut_drift
+    return await asyncio.get_event_loop().run_in_executor(
+        None, evaluate_cut_drift, service, phase_id, date.today()
+    )
+
+
 @app.get("/v1/daily-log", response_model=DailyLogListResponse, dependencies=[Depends(require_private_access)])
 async def list_daily_logs(
     start: date | None = None,
@@ -892,6 +1023,58 @@ async def insights_anomalies(
     protein_goal = getattr(prefs, "protein_goal_g", None)
     anomalies = compute_anomalies(service, record_date, protein_goal_g=protein_goal)
     return {"date": record_date.isoformat(), "anomalies": [a.to_dict() for a in anomalies]}
+
+
+@app.get("/v1/streaks", dependencies=[Depends(require_private_access)])
+async def get_streaks(
+    service: HealthAutoExportService = Depends(get_health_export_service),
+) -> dict:
+    from macrofactor_scraper.streaks import compute_streaks
+    prefs = service.dashboard_preferences()
+    protein_goal = getattr(prefs, "protein_goal_g", None)
+    active_phase = service.get_active_cut_phase()
+    kcal_goal = active_phase.get("target_calories") if active_phase else None
+    steps_goal = None
+    streaks = await asyncio.get_event_loop().run_in_executor(
+        None, lambda: compute_streaks(service, protein_goal_g=protein_goal, kcal_goal=kcal_goal, steps_goal=steps_goal)
+    )
+    return {"streaks": streaks}
+
+
+@app.get("/v1/badges", dependencies=[Depends(require_private_access)])
+async def get_badges(
+    service: HealthAutoExportService = Depends(get_health_export_service),
+) -> dict:
+    from macrofactor_scraper.streaks import compute_badges
+    prefs = service.dashboard_preferences()
+    protein_goal = getattr(prefs, "protein_goal_g", None)
+    badges = await asyncio.get_event_loop().run_in_executor(
+        None, lambda: compute_badges(service, protein_goal_g=protein_goal)
+    )
+    earned_count = sum(1 for b in badges if b["earned"])
+    return {"badges": badges, "earned_count": earned_count, "total": len(badges)}
+
+
+@app.get("/v1/insights/refeed-suggestion/{record_date}", dependencies=[Depends(require_private_access)])
+async def insights_refeed_suggestion(
+    record_date: date,
+    service: HealthAutoExportService = Depends(get_health_export_service),
+) -> dict:
+    from macrofactor_scraper.insights import recommend_refeed
+    return await asyncio.get_event_loop().run_in_executor(
+        None, recommend_refeed, service, record_date
+    )
+
+
+@app.get("/v1/insights/training-call/{record_date}", dependencies=[Depends(require_private_access)])
+async def insights_training_call(
+    record_date: date,
+    service: HealthAutoExportService = Depends(get_health_export_service),
+) -> dict:
+    from macrofactor_scraper.insights import recommend_training
+    return await asyncio.get_event_loop().run_in_executor(
+        None, recommend_training, service, record_date
+    )
 
 
 PHOTO_MAX_BYTES = 15 * 1024 * 1024
@@ -996,6 +1179,65 @@ async def delete_photo(
     return {"deleted": True, "date": photo_date, "pose": pose}
 
 
+@app.get("/v1/push/vapid-public-key", dependencies=[Depends(require_private_access)])
+async def get_vapid_public_key(settings: Settings = Depends(get_settings)) -> dict:
+    if not settings.has_push_configured:
+        raise HTTPException(status_code=503, detail="Push notifications not configured — set VAPID_PUBLIC_KEY and VAPID_PRIVATE_KEY")
+    return {"publicKey": settings.vapid_public_key}
+
+
+class PushSubscribeRequest(BaseModel):
+    endpoint: str
+    keys: dict[str, str]
+
+
+@app.post("/v1/push/subscribe", status_code=201, dependencies=[Depends(require_private_access)])
+async def push_subscribe(
+    body: PushSubscribeRequest,
+    service: HealthAutoExportService = Depends(get_health_export_service),
+    settings: Settings = Depends(get_settings),
+) -> dict:
+    if not settings.has_push_configured:
+        raise HTTPException(status_code=503, detail="Push notifications not configured")
+    service.upsert_push_subscription(
+        endpoint=body.endpoint,
+        p256dh=body.keys.get("p256dh", ""),
+        auth=body.keys.get("auth", ""),
+    )
+    return {"subscribed": True}
+
+
+@app.delete("/v1/push/subscribe", dependencies=[Depends(require_private_access)])
+async def push_unsubscribe(
+    body: PushSubscribeRequest,
+    service: HealthAutoExportService = Depends(get_health_export_service),
+) -> dict:
+    removed = service.delete_push_subscription(body.endpoint)
+    return {"unsubscribed": removed}
+
+
+@app.post("/v1/push/test", dependencies=[Depends(require_private_access)])
+async def push_test(
+    service: HealthAutoExportService = Depends(get_health_export_service),
+    settings: Settings = Depends(get_settings),
+) -> dict:
+    if not settings.has_push_configured:
+        raise HTTPException(status_code=503, detail="Push notifications not configured")
+    from macrofactor_scraper.notifications import send_push
+    sent = await asyncio.get_event_loop().run_in_executor(
+        None,
+        lambda: send_push(
+            service,
+            "Health Dashboard",
+            "Push notifications are working!",
+            "/",
+            vapid_private_key=settings.vapid_private_key,  # type: ignore[arg-type]
+            vapid_contact=settings.vapid_contact,
+        ),
+    )
+    return {"sent": sent}
+
+
 @app.post("/v1/ai/analyse", response_model=AiAnalyseResponse, dependencies=[Depends(require_private_access)])
 async def ai_analyse(
     body: AiAnalyseRequest,
@@ -1014,8 +1256,68 @@ async def ai_analyse(
     return AiAnalyseResponse(**result)
 
 
+@app.get("/v1/weekly-recap/list", dependencies=[Depends(require_private_access)])
+async def weekly_recap_list(
+    service: HealthAutoExportService = Depends(get_health_export_service),
+) -> dict:
+    recaps = await asyncio.get_event_loop().run_in_executor(None, lambda: service.list_weekly_recaps())
+    return {"recaps": recaps}
+
+
+@app.get("/v1/weekly-recap/{week_start}", dependencies=[Depends(require_private_access)])
+async def weekly_recap_get(
+    week_start: str,
+    service: HealthAutoExportService = Depends(get_health_export_service),
+) -> dict:
+    recap = await asyncio.get_event_loop().run_in_executor(None, lambda: service.get_weekly_recap(week_start))
+    if not recap:
+        raise HTTPException(status_code=404, detail="No recap found for this week")
+    return recap
+
+
+@app.post("/v1/weekly-recap/{week_start}/regenerate", dependencies=[Depends(require_private_access)])
+async def weekly_recap_regenerate(
+    week_start: str,
+    service: HealthAutoExportService = Depends(get_health_export_service),
+    settings: Settings = Depends(get_settings),
+) -> dict:
+    if not settings.anthropic_api_key:
+        raise HTTPException(status_code=503, detail="AI not configured")
+    from macrofactor_scraper.ai import generate_weekly_recap, check_rate_limit, RateLimitError
+    try:
+        check_rate_limit()
+    except RateLimitError as exc:
+        raise HTTPException(status_code=429, detail=str(exc)) from exc
+    try:
+        week_date = date.fromisoformat(week_start)
+    except ValueError:
+        raise HTTPException(status_code=422, detail="Invalid week_start date")
+    result = await generate_weekly_recap(service, week_date, settings.anthropic_api_key)
+    await asyncio.get_event_loop().run_in_executor(
+        None,
+        lambda: service.upsert_weekly_recap(
+            result["week_start_date"],
+            result["narrative"],
+            result["highlights"],
+            result["model"],
+            result["tokens_used"],
+        ),
+    )
+    return result
+
+
 @app.get("/{full_path:path}")
 async def spa_fallback(full_path: str, request: Request, settings: Settings = Depends(get_settings)) -> Response:
+    # Serve PWA static files (sw.js, workbox-*.js, manifest, registerSW.js) without auth
+    candidate = FRONTEND_DIR / full_path
+    try:
+        candidate = candidate.resolve()
+        FRONTEND_DIR.resolve()
+    except Exception:
+        pass
+    else:
+        if str(candidate).startswith(str(FRONTEND_DIR.resolve())) and candidate.is_file() and candidate.suffix in {".js", ".webmanifest", ".json", ".txt", ".ico"}:
+            return FileResponse(candidate)
     if not _verify_session(request.cookies.get(SESSION_COOKIE_NAME), settings):
         return RedirectResponse("/login", status_code=303)
     return HTMLResponse(_read_static("dashboard.html"))

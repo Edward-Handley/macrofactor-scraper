@@ -14,6 +14,8 @@ import { Measurements } from "./pages/measurements";
 import { Health } from "./pages/health";
 import { WeeklyScorecard } from "./pages/week";
 import { Photos } from "./pages/photos";
+import { Achievements } from "./pages/achievements";
+import { Recaps } from "./pages/recaps";
 
 export const router = createBrowserRouter([
   {
@@ -34,6 +36,8 @@ export const router = createBrowserRouter([
       { path: "measurements", element: <Measurements /> },
       { path: "week", element: <WeeklyScorecard /> },
       { path: "photos", element: <Photos /> },
+      { path: "achievements", element: <Achievements /> },
+      { path: "recaps", element: <Recaps /> },
     ],
   },
 ]);

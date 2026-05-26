@@ -1,7 +1,9 @@
 import { usePreferences, useUpdatePreferences } from "../hooks/use-dashboard";
-import { Check, Save } from "lucide-react";
+import { useEffect, useState } from "react";
+import { Check, Send } from "lucide-react";
 import { FIELD_META, ALL_FIELDS } from "../lib/types";
 import type { SummaryField } from "../lib/types";
+import { subscribeToPush, unsubscribeFromPush, sendTestPush, getPushState, getCurrentSubscription } from "../lib/push";
 
 function Card({ children, title, className = "" }: { children: React.ReactNode; title: string; className?: string }) {
   return (
@@ -35,6 +37,90 @@ function Toggle({ checked, onChange, label }: { checked: boolean; onChange: (v: 
 }
 
 const RANGE_OPTIONS = [7, 14, 30, 90];
+
+function NotificationsCard() {
+  const [pushState, setPushState] = useState<"unsupported" | "denied" | "granted" | "default" | "loading">("loading");
+  const [subscribed, setSubscribed] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [testStatus, setTestStatus] = useState<"idle" | "sent" | "error">("idle");
+
+  useEffect(() => {
+    getPushState().then(setPushState);
+    getCurrentSubscription().then((s) => setSubscribed(!!s));
+  }, []);
+
+  async function handleToggle() {
+    setBusy(true);
+    try {
+      if (subscribed) {
+        await unsubscribeFromPush();
+        setSubscribed(false);
+      } else {
+        const ok = await subscribeToPush();
+        if (ok) {
+          setSubscribed(true);
+          setPushState("granted");
+        } else {
+          setPushState(await getPushState());
+        }
+      }
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleTest() {
+    setTestStatus("idle");
+    const ok = await sendTestPush();
+    setTestStatus(ok ? "sent" : "error");
+    setTimeout(() => setTestStatus("idle"), 3000);
+  }
+
+  if (pushState === "unsupported") return null;
+
+  return (
+    <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4">
+      <p className="text-xs font-semibold text-zinc-500 uppercase tracking-wide mb-4">Notifications</p>
+      <div className="flex items-center justify-between py-2">
+        <div>
+          <p className="text-sm text-zinc-300">Push notifications</p>
+          <p className="text-xs text-zinc-600 mt-0.5">
+            {pushState === "denied"
+              ? "Blocked by browser — enable in site settings"
+              : subscribed
+              ? "Morning check-in, evening reminders, anomaly alerts"
+              : "Get reminders and anomaly alerts"}
+          </p>
+        </div>
+        <button
+          onClick={handleToggle}
+          disabled={busy || pushState === "denied"}
+          className={[
+            "relative w-9 h-5 rounded-full transition-colors shrink-0 disabled:opacity-40",
+            subscribed ? "bg-emerald-500" : "bg-zinc-700",
+          ].join(" ")}
+        >
+          <span className={[
+            "absolute top-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform",
+            subscribed ? "translate-x-4" : "translate-x-0.5",
+          ].join(" ")} />
+        </button>
+      </div>
+      {subscribed && (
+        <div className="mt-2 pt-3 border-t border-zinc-800 flex items-center gap-2">
+          <button
+            onClick={handleTest}
+            disabled={testStatus !== "idle"}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-zinc-800 text-zinc-400 hover:text-zinc-100 transition-colors"
+          >
+            <Send size={12} />
+            {testStatus === "sent" ? "Sent!" : testStatus === "error" ? "Failed" : "Send test"}
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
 
 export function Settings() {
   const { data: prefs, isLoading } = usePreferences();
@@ -174,6 +260,8 @@ export function Settings() {
           </div>
         </div>
       </Card>
+
+      <NotificationsCard />
 
       <Card title="Reset to defaults">
         <p className="text-sm text-zinc-500 mb-3">Restore all preferences to their default values.</p>

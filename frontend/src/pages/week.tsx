@@ -1,7 +1,10 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useDashboardSummary, usePreferences } from "../hooks/use-dashboard";
 import { useDailyLogs, useCutPhases } from "../hooks/use-daily-log";
 import { isoDate } from "../lib/format";
+import { api, type WeeklyRecap } from "../lib/api";
+import { RefreshCw, Sparkles } from "lucide-react";
 
 function addDays(iso: string, n: number): string {
   const [y, m, d] = iso.split("-").map(Number);
@@ -35,6 +38,80 @@ function DeltaCell({ value, unit = "", reversed = false, decimals = 1 }: {
     <span className={`text-sm font-semibold tabular-nums ${good ? "text-emerald-400" : "text-red-400"}`}>
       {up ? "+" : ""}{value.toFixed(decimals)}{unit}
     </span>
+  );
+}
+
+function WeeklyStoryCard({ weekStart }: { weekStart: string }) {
+  const qc = useQueryClient();
+  const [generating, setGenerating] = useState(false);
+
+  const { data: recap, isLoading } = useQuery<WeeklyRecap | null>({
+    queryKey: ["weekly-recap", weekStart],
+    queryFn: async () => {
+      try {
+        return await api.weeklyRecap.get(weekStart);
+      } catch {
+        return null;
+      }
+    },
+    staleTime: 600_000,
+    retry: false,
+  });
+
+  const regenerate = useMutation({
+    mutationFn: () => api.weeklyRecap.regenerate(weekStart),
+    onMutate: () => setGenerating(true),
+    onSettled: () => setGenerating(false),
+    onSuccess: (data) => {
+      qc.setQueryData(["weekly-recap", weekStart], data);
+    },
+  });
+
+  if (isLoading) {
+    return (
+      <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4 flex items-center gap-3">
+        <Sparkles size={16} className="text-violet-400 shrink-0" />
+        <span className="text-sm text-zinc-500">Loading weekly story…</span>
+      </div>
+    );
+  }
+
+  return (
+    <div className="bg-zinc-900 border border-violet-800/40 rounded-2xl p-4 space-y-3">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <Sparkles size={14} className="text-violet-400" />
+          <span className="text-xs font-semibold text-zinc-400 uppercase tracking-wide">Weekly Story</span>
+        </div>
+        <button
+          onClick={() => regenerate.mutate()}
+          disabled={generating}
+          className="flex items-center gap-1.5 text-xs text-zinc-500 hover:text-zinc-200 transition-colors disabled:opacity-50"
+        >
+          <RefreshCw size={12} className={generating ? "animate-spin" : ""} />
+          {recap ? "Regenerate" : "Generate"}
+        </button>
+      </div>
+
+      {recap ? (
+        <>
+          <p className="text-sm text-zinc-300 leading-relaxed whitespace-pre-wrap">{recap.narrative}</p>
+          {recap.highlights.length > 0 && (
+            <div className="flex flex-wrap gap-1.5">
+              {recap.highlights.map((h, i) => (
+                <span key={i} className="text-[11px] bg-violet-500/10 text-violet-300 border border-violet-700/40 rounded-full px-2.5 py-0.5">
+                  {h}
+                </span>
+              ))}
+            </div>
+          )}
+        </>
+      ) : (
+        <p className="text-sm text-zinc-500">
+          No recap yet. Hit "Generate" to get an AI summary of this week.
+        </p>
+      )}
+    </div>
   );
 }
 
@@ -173,6 +250,8 @@ export function WeeklyScorecard() {
           <span><span className="text-zinc-600 font-bold">—</span> informational</span>
         </div>
       </div>
+
+      <WeeklyStoryCard weekStart={thisWeekStart} />
     </div>
   );
 }
