@@ -2,7 +2,7 @@ import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Bot, ChevronDown, ChevronUp, Pencil, RefreshCw } from "lucide-react";
-import { useDashboardSummary, usePreferences, useReadiness, useAnomalies, useTrainingCall, useRefeedSuggestion } from "../hooks/use-dashboard";
+import { useDashboardSummary, usePreferences, useReadiness, useAnomalies, useTrainingCall, useRefeedSuggestion, useSmartInsights } from "../hooks/use-dashboard";
 import { useCutPhases, useDailyLogs } from "../hooks/use-daily-log";
 import { useActiveDate } from "../hooks/use-active-date";
 import { AnomalyStrip } from "../components/insights/anomaly-strip";
@@ -14,6 +14,7 @@ import { CalendarHeatmap } from "../components/charts/calendar-heatmap";
 import { ReadinessCard } from "../components/charts/readiness-card";
 import { TrainingCallCard } from "../components/insights/training-call-card";
 import { RefeedCard } from "../components/insights/refeed-card";
+import { SmartInsightCard } from "../components/insights/smart-insight-card";
 import { api } from "../lib/api";
 import { fmt, formatMinutesAsHoursMinutes, formatShortDate, formatDdMmYyyy, deltaArrow } from "../lib/format";
 import { FIELD_META } from "../lib/types";
@@ -336,6 +337,7 @@ export function Today() {
   const { data: anomaliesData } = useAnomalies(forDate);
   const { data: trainingCall } = useTrainingCall(forDate);
   const { data: refeedSuggestion } = useRefeedSuggestion(forDate);
+  const { data: smartInsightsData } = useSmartInsights(forDate);
   const streakStart = addDays(forDate, -29);
   const { data: logsData } = useDailyLogs(streakStart, addDays(forDate, -1));
   const activePhase = cutData?.phases.find((p) => !p.end_date || p.end_date >= TODAY) ?? null;
@@ -475,6 +477,23 @@ export function Today() {
       {/* Anomaly chips */}
       {anomaliesData?.anomalies && anomaliesData.anomalies.length > 0 && (
         <AnomalyStrip anomalies={anomaliesData.anomalies as any} />
+      )}
+
+      {/* Smart insights */}
+      {smartInsightsData && smartInsightsData.insights.length > 0 && (
+        <div className="space-y-2">
+          <div className="flex items-center justify-between">
+            <p className="text-xs font-semibold text-zinc-500 uppercase tracking-wide">Smart Insights</p>
+            {smartInsightsData.insights.length > 3 && (
+              <Link to="/insights" className="text-xs text-violet-400 hover:text-violet-300 transition-colors">
+                View all {smartInsightsData.insights.length}
+              </Link>
+            )}
+          </div>
+          {smartInsightsData.insights.slice(0, 3).map((ins) => (
+            <SmartInsightCard key={ins.id} insight={ins} compact />
+          ))}
+        </div>
       )}
 
       {/* Cut phase banner */}

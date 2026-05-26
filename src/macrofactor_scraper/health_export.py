@@ -1511,6 +1511,25 @@ class HealthAutoExportService:
                     tokens_used INTEGER NOT NULL DEFAULT 0,
                     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
                 );
+                CREATE TABLE IF NOT EXISTS coach_conversations (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    title TEXT NOT NULL,
+                    framing TEXT,
+                    for_date TEXT,
+                    archived INTEGER NOT NULL DEFAULT 0
+                );
+                CREATE TABLE IF NOT EXISTS coach_messages (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    conversation_id INTEGER NOT NULL REFERENCES coach_conversations(id) ON DELETE CASCADE,
+                    role TEXT NOT NULL CHECK(role IN ('system','user','assistant')),
+                    content TEXT NOT NULL,
+                    tokens_used INTEGER,
+                    model TEXT,
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                );
+                CREATE INDEX IF NOT EXISTS idx_coach_msgs_conv ON coach_messages(conversation_id, id);
                 CREATE INDEX IF NOT EXISTS idx_health_records_date_metric_source
                     ON health_records (record_date, metric_name, source);
                 CREATE INDEX IF NOT EXISTS idx_strong_sessions_date
@@ -1528,6 +1547,9 @@ class HealthAutoExportService:
             recap_cols = {c["name"] for c in conn.execute("PRAGMA table_info(weekly_recaps)").fetchall()}
             if not recap_cols:
                 pass  # table created fresh above
+            bm_cols = {c["name"] for c in conn.execute("PRAGMA table_info(body_measurements)").fetchall()}
+            if "body_fat_percent" not in bm_cols:
+                conn.execute("ALTER TABLE body_measurements ADD COLUMN body_fat_percent REAL")
         self._initialized = True
 
     # ─── Garmin metric upsert ────────────────────────────────────────────────
@@ -1722,7 +1744,7 @@ class HealthAutoExportService:
 
     def upsert_measurement(self, measure_date: str, fields: dict) -> dict:
         self._ensure_schema()
-        allowed = {"waist_cm", "chest_cm", "l_arm_cm", "r_arm_cm", "l_thigh_cm", "r_thigh_cm", "hip_cm"}
+        allowed = {"waist_cm", "chest_cm", "l_arm_cm", "r_arm_cm", "l_thigh_cm", "r_thigh_cm", "hip_cm", "body_fat_percent"}
         clean = {k: v for k, v in fields.items() if k in allowed}
         with self._connect() as conn:
             existing = conn.execute("SELECT * FROM body_measurements WHERE measure_date = ?", (measure_date,)).fetchone()
@@ -1742,6 +1764,148 @@ class HealthAutoExportService:
                 )
             row = conn.execute("SELECT * FROM body_measurements WHERE measure_date = ?", (measure_date,)).fetchone()
             return dict(row)
+
+    # ─── Coach conversations ──────────────────────────────────────────────────
+
+    def create_coach_conversation(self, title: str, framing: str | None, for_date: str | None) -> dict:
+        self._ensure_schema()
+        import datetime as _dt
+        now = _dt.datetime.utcnow().isoformat()
+        with self._connect() as conn:
+            cur = conn.execute(
+                "INSERT INTO coach_conversations (created_at, updated_at, title, framing, for_date) VALUES (?, ?, ?, ?, ?)",
+                (now, now, title, framing, for_date),
+            )
+            row = conn.execute("SELECT * FROM coach_conversations WHERE id = ?", (cur.lastrowid,)).fetchone()
+            return dict(row)
+
+    def list_coach_conversations(self) -> list[dict]:
+        self._ensure_schema()
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM coach_conversations WHERE archived = 0 ORDER BY updated_at DESC"
+            ).fetchall()
+            return [dict(r) for r in rows]
+
+    def get_coach_conversation(self, conv_id: int) -> dict | None:
+        self._ensure_schema()
+        with self._connect() as conn:
+            row = conn.execute("SELECT * FROM coach_conversations WHERE id = ?", (conv_id,)).fetchone()
+            if not row:
+                return None
+            conv = dict(row)
+            msgs = conn.execute(
+                "SELECT * FROM coach_messages WHERE conversation_id = ? ORDER BY id",
+                (conv_id,),
+            ).fetchall()
+            conv["messages"] = [dict(m) for m in msgs]
+            return conv
+
+    def archive_coach_conversation(self, conv_id: int) -> bool:
+        self._ensure_schema()
+        with self._connect() as conn:
+            conn.execute("UPDATE coach_conversations SET archived = 1 WHERE id = ?", (conv_id,))
+            return conn.execute("SELECT changes()").fetchone()[0] > 0
+
+    def add_coach_message(
+        self,
+        conv_id: int,
+        role: str,
+        content: str,
+        tokens_used: int | None = None,
+        model: str | None = None,
+    ) -> dict:
+        self._ensure_schema()
+        import datetime as _dt
+        now = _dt.datetime.utcnow().isoformat()
+        with self._connect() as conn:
+            cur = conn.execute(
+                "INSERT INTO coach_messages (conversation_id, role, content, tokens_used, model, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                (conv_id, role, content, tokens_used, model, now),
+            )
+            conn.execute(
+                "UPDATE coach_conversations SET updated_at = ? WHERE id = ?",
+                (now, conv_id),
+            )
+            row = conn.execute("SELECT * FROM coach_messages WHERE id = ?", (cur.lastrowid,)).fetchone()
+            return dict(row)
+
+    def get_coach_messages(self, conv_id: int) -> list[dict]:
+        self._ensure_schema()
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM coach_messages WHERE conversation_id = ? ORDER BY id",
+                (conv_id,),
+            ).fetchall()
+            return [dict(r) for r in rows]
+
+    # ─── Body composition ─────────────────────────────────────────────────────
+
+    def get_body_composition(self, start: "date", end: "date") -> list[dict]:
+        """Return per-day body composition data with interpolated BF% where missing."""
+        from datetime import timedelta as _td
+        self._ensure_schema()
+        # Load weight data from daily_summary
+        summaries = self.dashboard_summary(start, end).summaries
+        weight_by_date: dict[str, float | None] = {s.date.isoformat(): s.weight for s in summaries}
+
+        # Load BF% measurements
+        meas_rows = self.get_measurements(start - _td(days=60), end + _td(days=60))
+        bf_by_date: dict[str, float] = {
+            r["measure_date"]: float(r["body_fat_percent"])
+            for r in meas_rows
+            if r.get("body_fat_percent") is not None
+        }
+
+        # Collect all dates in range
+        result: list[dict] = []
+        cur = start
+        all_bf_dates = sorted(bf_by_date.keys())
+
+        while cur <= end:
+            d = cur.isoformat()
+            weight = weight_by_date.get(d)
+            bf_pct: float | None = None
+            source = "none"
+
+            if d in bf_by_date:
+                bf_pct = bf_by_date[d]
+                source = "measured"
+            elif all_bf_dates:
+                # Linear interpolation between nearest measurements
+                prev_dates = [x for x in all_bf_dates if x <= d]
+                next_dates = [x for x in all_bf_dates if x > d]
+                if prev_dates and next_dates:
+                    p, n = prev_dates[-1], next_dates[0]
+                    from datetime import date as _date
+                    p_date = _date.fromisoformat(p)
+                    n_date = _date.fromisoformat(n)
+                    span = (n_date - p_date).days
+                    if span > 0:
+                        frac = (cur - p_date).days / span
+                        bf_pct = bf_by_date[p] + frac * (bf_by_date[n] - bf_by_date[p])
+                        source = "interpolated"
+                elif prev_dates:
+                    bf_pct = bf_by_date[prev_dates[-1]]
+                    source = "carried_forward"
+
+            lean_kg: float | None = None
+            fat_kg: float | None = None
+            if weight is not None and bf_pct is not None:
+                fat_kg = round(weight * bf_pct / 100, 2)
+                lean_kg = round(weight - fat_kg, 2)
+
+            result.append({
+                "date": d,
+                "weight_kg": weight,
+                "body_fat_percent": round(bf_pct, 2) if bf_pct is not None else None,
+                "lean_kg": lean_kg,
+                "fat_kg": fat_kg,
+                "source": source,
+            })
+            cur += _td(days=1)
+
+        return result
 
     # ─── Progress photos ─────────────────────────────────────────────────────
 

@@ -2,9 +2,10 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from collections import deque
 from datetime import date, timedelta
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, AsyncIterator
 
 if TYPE_CHECKING:
     from macrofactor_scraper.health_export import HealthAutoExportService
@@ -150,6 +151,51 @@ async def run_analysis(
         "model": "claude-haiku-4-5-20251001",
         "tokens_used": tokens_used,
     }
+
+
+_CHAT_SYSTEM = (
+    "You are a concise, data-driven health coach. "
+    "The user's health data snapshot is embedded in the first message. "
+    "Answer questions and give coaching advice based on the data. "
+    "Be specific with numbers. Respond in plain markdown (no LaTeX)."
+)
+
+_FRAMING_INTRO: dict[str, str] = {
+    "check_in": "You are reviewing today's check-in data. Provide daily coaching feedback.",
+    "weekly": "You are doing a weekly review. Summarise progress vs targets and set next-week goals.",
+    "plateau": "Weight progress has stalled. Diagnose causes and suggest concrete adjustments.",
+    "cut_reassess": "Reassess the current cut phase: rate of loss, muscle retention, recovery quality.",
+    "free": "Answer freely based on the data provided.",
+}
+
+
+async def stream_chat(
+    messages: list[dict],
+    api_key: str,
+) -> AsyncIterator[str]:
+    """Stream a chat response from Claude. Yields JSON strings: {"delta":"..."} or {"done":true,"tokens":N}."""
+    import anthropic
+
+    check_rate_limit()
+    client = anthropic.AsyncAnthropic(api_key=api_key)
+
+    async with client.messages.stream(
+        model="claude-haiku-4-5-20251001",
+        max_tokens=1200,
+        system=_CHAT_SYSTEM,
+        messages=messages,
+    ) as stream:
+        async for text in stream.text_stream:
+            yield json.dumps({"delta": text})
+        final = await stream.get_final_message()
+        tokens = (final.usage.input_tokens or 0) + (final.usage.output_tokens or 0)
+        yield json.dumps({"done": True, "tokens": tokens})
+
+
+def build_chat_system_message(snapshot: str, framing: str | None) -> str:
+    """Build the system-level context block injected as the first user turn."""
+    intro = _FRAMING_INTRO.get(framing or "free", _FRAMING_INTRO["free"])
+    return f"{intro}\n\n{snapshot}"
 
 
 def _build_weekly_snapshot(service: "HealthAutoExportService", week_start: date) -> str:

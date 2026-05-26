@@ -1,5 +1,5 @@
 import { NavLink, useSearchParams } from "react-router-dom";
-import { Activity, BarChart2, BotMessageSquare, Camera, Database, Dumbbell, HeartPulse, Moon, Ruler, Search, Settings, Sun, Scissors, CalendarCheck, Trophy, ScrollText } from "lucide-react";
+import { Activity, BarChart2, BotMessageSquare, Camera, Database, Dumbbell, HeartPulse, Lightbulb, Moon, Ruler, Search, Settings, Sun, Scissors, CalendarCheck, Trophy, ScrollText } from "lucide-react";
 import { cn } from "../../lib/utils";
 
 // Morning = before 14:00, Evening = 14:00+
@@ -68,6 +68,7 @@ export function SidebarNav() {
       <LogNavItem />
       <NavItem to="/week" label="Week" Icon={CalendarCheck} />
       <NavItem to="/coach" label="Coach" Icon={BotMessageSquare} />
+      <NavItem to="/insights" label="Insights" Icon={Lightbulb} />
       <NavItem to="/photos" label="Photos" Icon={Camera} />
       <NavItem to="/achievements" label="Achievements" Icon={Trophy} />
       <NavItem to="/recaps" label="Recaps" Icon={ScrollText} />

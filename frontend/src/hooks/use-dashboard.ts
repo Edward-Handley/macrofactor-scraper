@@ -200,3 +200,60 @@ export function useRefeedSuggestion(date: string) {
     enabled: !!date,
   });
 }
+
+export function useSmartInsights(date: string) {
+  return useQuery({
+    queryKey: ["smart-insights", date],
+    queryFn: () => api.smartInsights.get(date),
+    staleTime: 300_000,
+    refetchOnWindowFocus: false,
+    enabled: !!date,
+  });
+}
+
+export function useBodyComposition(start: string, end: string) {
+  return useQuery({
+    queryKey: ["body-composition", start, end],
+    queryFn: () => api.bodyComposition.get(start, end),
+    staleTime: 300_000,
+    refetchOnWindowFocus: false,
+  });
+}
+
+export function useCoachConversations() {
+  return useQuery({
+    queryKey: ["coach-conversations"],
+    queryFn: () => api.coachChat.list(),
+    staleTime: 30_000,
+  });
+}
+
+export function useCoachConversation(id: number | null) {
+  return useQuery({
+    queryKey: ["coach-conversation", id],
+    queryFn: () => api.coachChat.get(id!),
+    staleTime: 0,
+    enabled: id != null,
+  });
+}
+
+export function useCreateCoachConversation() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ framing, forDate, title }: { framing?: string; forDate?: string; title?: string }) =>
+      api.coachChat.create(framing, forDate, title),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["coach-conversations"] });
+    },
+  });
+}
+
+export function useArchiveCoachConversation() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: number) => api.coachChat.archive(id),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["coach-conversations"] });
+    },
+  });
+}

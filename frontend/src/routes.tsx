@@ -16,6 +16,7 @@ import { WeeklyScorecard } from "./pages/week";
 import { Photos } from "./pages/photos";
 import { Achievements } from "./pages/achievements";
 import { Recaps } from "./pages/recaps";
+import { Insights } from "./pages/insights";
 
 export const router = createBrowserRouter([
   {
@@ -38,6 +39,7 @@ export const router = createBrowserRouter([
       { path: "photos", element: <Photos /> },
       { path: "achievements", element: <Achievements /> },
       { path: "recaps", element: <Recaps /> },
+      { path: "insights", element: <Insights /> },
     ],
   },
 ]);

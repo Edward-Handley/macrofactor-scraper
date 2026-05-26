@@ -5,8 +5,11 @@ import {
   ComposedChart, Area, Line, XAxis, YAxis, CartesianGrid,
   Tooltip, ResponsiveContainer,
 } from "recharts";
-import { useDashboardSummary } from "../hooks/use-dashboard";
-import { useCutPhases } from "../hooks/use-daily-log";
+import { useDashboardSummary, useBodyComposition } from "../hooks/use-dashboard";
+import { useCutPhases, useDailyLogs } from "../hooks/use-daily-log";
+import { BodyCompositionChart } from "../components/charts/body-composition-chart";
+import { RadarProfile } from "../components/charts/radar-profile";
+import { CalorieSankey } from "../components/charts/calorie-sankey";
 import { useDateRange } from "../hooks/use-date-range";
 import { TrendChart } from "../components/charts/trend-chart";
 import { FIELD_META, ALL_FIELDS } from "../lib/types";
@@ -17,7 +20,7 @@ import { linearRegression, forecastTail } from "../lib/projections";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-type TrendsTab = "nutrition" | "garmin" | "correlations";
+type TrendsTab = "nutrition" | "garmin" | "correlations" | "visuals";
 type ChartRow = Record<string, string | number | null>;
 
 // ─── Garmin constants ────────────────────────────────────────────────────────
@@ -782,6 +785,59 @@ function CorrelationsTab({ summaries, start, end }: { summaries: DailySummary[];
   );
 }
 
+// ─── Visuals tab ──────────────────────────────────────────────────────────────
+
+function VisualsTab({ start, end, summaries }: { start: string; end: string; summaries: DailySummary[] }) {
+  const { data: cutPhasesData } = useCutPhases();
+  const { data: bodyComp } = useBodyComposition(start, end);
+  const { data: logsData } = useDailyLogs(start, end);
+
+  const cutPhases = cutPhasesData?.phases ?? [];
+  const compPoints = bodyComp?.points ?? [];
+  const logs = logsData?.logs ?? [];
+
+  // Split into current/prior halves for radar
+  const midPoint = Math.floor(summaries.length / 2);
+  const currentSummaries = summaries.slice(midPoint);
+  const priorSummaries = summaries.slice(0, midPoint);
+  const currentLogs = logs.slice(Math.floor(logs.length / 2));
+  const priorLogs = logs.slice(0, Math.floor(logs.length / 2));
+
+  return (
+    <div className="space-y-6 pt-4">
+      <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4">
+        <h3 className="text-sm font-semibold text-zinc-300 mb-4">Body Composition</h3>
+        {compPoints.length === 0 ? (
+          <p className="text-sm text-zinc-500 text-center py-8">No weight data in range.</p>
+        ) : (
+          <BodyCompositionChart points={compPoints} cutPhases={cutPhases} />
+        )}
+      </div>
+
+      <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4">
+        <h3 className="text-sm font-semibold text-zinc-300 mb-1">Weekly Profile</h3>
+        <p className="text-xs text-zinc-500 mb-3">Current half vs prior half of selected range — normalized 0–100</p>
+        {currentSummaries.length === 0 ? (
+          <p className="text-sm text-zinc-500 text-center py-8">Not enough data.</p>
+        ) : (
+          <RadarProfile
+            currentWeekSummaries={currentSummaries}
+            priorWeekSummaries={priorSummaries}
+            currentWeekLogs={currentLogs}
+            priorWeekLogs={priorLogs}
+          />
+        )}
+      </div>
+
+      <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4">
+        <h3 className="text-sm font-semibold text-zinc-300 mb-1">Calorie Flow</h3>
+        <p className="text-xs text-zinc-500 mb-3">Average over selected range</p>
+        <CalorieSankey summaries={summaries} />
+      </div>
+    </div>
+  );
+}
+
 // ─── Main component ────────────────────────────────────────────────────────────
 
 export function Trends() {
@@ -866,7 +922,7 @@ export function Trends() {
 
       {/* Tab bar */}
       <div className="flex border-b border-zinc-800">
-        {(["nutrition", "garmin", "correlations"] as TrendsTab[]).map((t) => (
+        {(["nutrition", "garmin", "correlations", "visuals"] as TrendsTab[]).map((t) => (
           <button
             key={t}
             onClick={() => setTab(t)}
@@ -896,6 +952,9 @@ export function Trends() {
       {tab === "garmin" && <GarminTab start={start} end={end} />}
       {tab === "correlations" && (
         <CorrelationsTab summaries={summaries} start={start} end={end} />
+      )}
+      {tab === "visuals" && (
+        <VisualsTab start={start} end={end} summaries={summaries} />
       )}
     </div>
   );

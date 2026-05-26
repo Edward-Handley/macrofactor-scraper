@@ -486,6 +486,7 @@ export interface BodyMeasurement {
   l_thigh_cm: number | null;
   r_thigh_cm: number | null;
   hip_cm: number | null;
+  body_fat_percent: number | null;
   created_at: string | null;
   updated_at: string | null;
 }
@@ -585,4 +586,65 @@ export interface AiAnalyseResponse {
   analysis: string;
   model: string;
   tokens_used: number;
+}
+
+// - Coach chat -
+
+export interface CoachMessage {
+  id: number;
+  conversation_id: number;
+  role: "user" | "assistant" | "system";
+  content: string;
+  tokens_used: number | null;
+  model: string | null;
+  created_at: string;
+}
+
+export interface CoachConversation {
+  id: number;
+  created_at: string;
+  updated_at: string;
+  title: string;
+  framing: string | null;
+  for_date: string | null;
+  archived: number;
+}
+
+export interface CoachConversationWithMessages extends CoachConversation {
+  messages: CoachMessage[];
+}
+
+// - Smart insights -
+
+export interface SmartInsight {
+  id: string;
+  category: "correlation" | "pattern" | "conditional" | "streak" | "trend";
+  severity: "good" | "warn" | "info";
+  title: string;
+  detail: string;
+  metric_primary: string | null;
+  metric_secondary: string | null;
+  supporting: Record<string, unknown>;
+  action: string | null;
+}
+
+export interface SmartInsightsResponse {
+  date: string;
+  insights: SmartInsight[];
+}
+
+// - Body composition -
+
+export interface BodyCompositionPoint {
+  date: string;
+  weight_kg: number | null;
+  body_fat_percent: number | null;
+  lean_kg: number | null;
+  fat_kg: number | null;
+  source: string;
+}
+
+export interface BodyCompositionResponse {
+  count: number;
+  points: BodyCompositionPoint[];
 }

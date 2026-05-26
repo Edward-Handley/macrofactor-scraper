@@ -621,6 +621,7 @@ class BodyMeasurement(BaseModel):
     l_thigh_cm: float | None = None
     r_thigh_cm: float | None = None
     hip_cm: float | None = None
+    body_fat_percent: float | None = None
     created_at: dt.datetime | None = None
     updated_at: dt.datetime | None = None
 
@@ -633,6 +634,7 @@ class BodyMeasurementUpsert(BaseModel):
     l_thigh_cm: float | None = None
     r_thigh_cm: float | None = None
     hip_cm: float | None = None
+    body_fat_percent: float | None = None
 
 
 class BodyMeasurementListResponse(BaseModel):
@@ -688,6 +690,7 @@ def _row_to_measurement(row: dict) -> BodyMeasurement:
         l_thigh_cm=row.get("l_thigh_cm"),
         r_thigh_cm=row.get("r_thigh_cm"),
         hip_cm=row.get("hip_cm"),
+        body_fat_percent=row.get("body_fat_percent"),
         created_at=row.get("created_at"),
         updated_at=row.get("updated_at"),
     )
@@ -763,3 +766,74 @@ class AiAnalyseResponse(BaseModel):
     analysis: str
     model: str
     tokens_used: int
+
+
+# ─── Coach chat ───────────────────────────────────────────────────────────────
+
+class CoachMessage(BaseModel):
+    id: int
+    conversation_id: int
+    role: str
+    content: str
+    tokens_used: int | None = None
+    model: str | None = None
+    created_at: str
+
+
+class CoachConversation(BaseModel):
+    id: int
+    created_at: str
+    updated_at: str
+    title: str
+    framing: str | None = None
+    for_date: str | None = None
+    archived: int = 0
+
+
+class CoachConversationWithMessages(CoachConversation):
+    messages: list[CoachMessage] = Field(default_factory=list)
+
+
+class CoachConversationCreate(BaseModel):
+    title: str | None = None
+    framing: str | None = None
+    for_date: str | None = None
+
+
+class CoachChatRequest(BaseModel):
+    message: str
+
+
+# ─── Smart insights ───────────────────────────────────────────────────────────
+
+class SmartInsight(BaseModel):
+    id: str
+    category: str
+    severity: str
+    title: str
+    detail: str
+    metric_primary: str | None = None
+    metric_secondary: str | None = None
+    supporting: dict[str, Any] = Field(default_factory=dict)
+    action: str | None = None
+
+
+class SmartInsightsResponse(BaseModel):
+    date: str
+    insights: list[SmartInsight]
+
+
+# ─── Body composition ─────────────────────────────────────────────────────────
+
+class BodyCompositionPoint(BaseModel):
+    date: str
+    weight_kg: float | None = None
+    body_fat_percent: float | None = None
+    lean_kg: float | None = None
+    fat_kg: float | None = None
+    source: str = "none"
+
+
+class BodyCompositionResponse(BaseModel):
+    count: int
+    points: list[BodyCompositionPoint]

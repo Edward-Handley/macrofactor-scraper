@@ -17,24 +17,27 @@ const MEAS_FIELDS: Array<{ key: keyof BodyMeasurementUpsert; label: string; lowe
   { key: "hip_cm",     label: "Hip",         lowerIsBetter: true  },
 ];
 
-const FIELDS: Array<{ key: keyof BodyMeasurementUpsert; label: string }> = [
-  { key: "waist_cm", label: "Waist" },
-  { key: "chest_cm", label: "Chest" },
-  { key: "l_arm_cm", label: "Left arm" },
-  { key: "r_arm_cm", label: "Right arm" },
-  { key: "l_thigh_cm", label: "Left thigh" },
-  { key: "r_thigh_cm", label: "Right thigh" },
-  { key: "hip_cm", label: "Hip" },
+const FIELDS: Array<{ key: keyof BodyMeasurementUpsert; label: string; unit?: string }> = [
+  { key: "waist_cm",        label: "Waist"       },
+  { key: "chest_cm",        label: "Chest"       },
+  { key: "l_arm_cm",        label: "Left arm"    },
+  { key: "r_arm_cm",        label: "Right arm"   },
+  { key: "l_thigh_cm",      label: "Left thigh"  },
+  { key: "r_thigh_cm",      label: "Right thigh" },
+  { key: "hip_cm",          label: "Hip"         },
+  { key: "body_fat_percent", label: "Body fat", unit: "%" },
 ];
 
 function MeasurementInput({
   label,
   value,
   onChange,
+  unit = "cm",
 }: {
   label: string;
   value: number | null;
   onChange: (value: number | null) => void;
+  unit?: string;
 }) {
   return (
     <label className="flex flex-col gap-1">
@@ -48,7 +51,7 @@ function MeasurementInput({
           onChange={(event) => onChange(event.target.value === "" ? null : Number(event.target.value))}
           className="w-full bg-zinc-800 border border-zinc-700 rounded-xl px-3 py-2 text-sm text-zinc-100 focus:outline-none focus:ring-2 focus:ring-emerald-500"
         />
-        <span className="text-xs text-zinc-500 w-7">cm</span>
+        <span className="text-xs text-zinc-500 w-7">{unit}</span>
       </div>
     </label>
   );
@@ -138,6 +141,7 @@ export function Measurements() {
       l_thigh_cm: existing.l_thigh_cm,
       r_thigh_cm: existing.r_thigh_cm,
       hip_cm: existing.hip_cm,
+      body_fat_percent: existing.body_fat_percent,
     });
   }, [existing]);
 
@@ -185,6 +189,7 @@ export function Measurements() {
               label={field.label}
               value={form[field.key] ?? null}
               onChange={(value) => setField(field.key, value)}
+              unit={field.unit}
             />
           ))}
         </div>

@@ -17,15 +17,20 @@ from urllib.parse import parse_qs
 
 from fastapi import Depends, FastAPI, File, Header, HTTPException, Query, Request, Response, UploadFile
 from pydantic import BaseModel
-from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from macrofactor_scraper.config import Settings, get_settings
 from macrofactor_scraper.health_export import HealthAutoExportService
 from macrofactor_scraper.models import (
+    BodyCompositionResponse,
     BodyMeasurement,
     BodyMeasurementListResponse,
     BodyMeasurementUpsert,
+    CoachChatRequest,
+    CoachConversation,
+    CoachConversationCreate,
+    CoachConversationWithMessages,
     CoachDraftResponse,
     CutPhase,
     CutPhaseCreate,
@@ -46,6 +51,7 @@ from macrofactor_scraper.models import (
     MetricRecordsResponse,
     ReadinessReport,
     RepairReport,
+    SmartInsightsResponse,
     StrongAnalyticsResponse,
     StrongExerciseDetailResponse,
     StrongImportListResponse,
@@ -1004,6 +1010,139 @@ async def coach_draft(
     return CoachDraftResponse(date=target.isoformat(), prompt_text=prompt_text)
 
 
+@app.post("/v1/coach/conversations", response_model=CoachConversation, dependencies=[Depends(require_private_access)])
+async def create_coach_conversation(
+    body: CoachConversationCreate,
+    service: HealthAutoExportService = Depends(get_health_export_service),
+    settings: Settings = Depends(get_settings),
+) -> CoachConversation:
+    import datetime as _dt
+    for_date = body.for_date or _dt.date.today().isoformat()
+    framing = body.framing or "free"
+    title = body.title or f"{framing.replace('_', ' ').title()} — {for_date}"
+    row = await asyncio.get_event_loop().run_in_executor(
+        None, lambda: service.create_coach_conversation(title, framing, for_date)
+    )
+    return CoachConversation(**row)
+
+
+@app.get("/v1/coach/conversations", dependencies=[Depends(require_private_access)])
+async def list_coach_conversations(
+    service: HealthAutoExportService = Depends(get_health_export_service),
+) -> dict:
+    rows = await asyncio.get_event_loop().run_in_executor(None, service.list_coach_conversations)
+    return {"conversations": rows}
+
+
+@app.get("/v1/coach/conversations/{conv_id}", response_model=CoachConversationWithMessages, dependencies=[Depends(require_private_access)])
+async def get_coach_conversation(
+    conv_id: int,
+    service: HealthAutoExportService = Depends(get_health_export_service),
+) -> CoachConversationWithMessages:
+    row = await asyncio.get_event_loop().run_in_executor(
+        None, lambda: service.get_coach_conversation(conv_id)
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    return CoachConversationWithMessages(**row)
+
+
+@app.delete("/v1/coach/conversations/{conv_id}", dependencies=[Depends(require_private_access)])
+async def archive_coach_conversation(
+    conv_id: int,
+    service: HealthAutoExportService = Depends(get_health_export_service),
+) -> dict:
+    ok = await asyncio.get_event_loop().run_in_executor(
+        None, lambda: service.archive_coach_conversation(conv_id)
+    )
+    if not ok:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    return {"archived": True}
+
+
+@app.post("/v1/coach/conversations/{conv_id}/messages", dependencies=[Depends(require_private_access)])
+async def coach_chat_message(
+    conv_id: int,
+    body: CoachChatRequest,
+    service: HealthAutoExportService = Depends(get_health_export_service),
+    settings: Settings = Depends(get_settings),
+) -> StreamingResponse:
+    if not settings.anthropic_api_key:
+        raise HTTPException(status_code=503, detail="AI not configured — set ANTHROPIC_API_KEY")
+
+    conv = await asyncio.get_event_loop().run_in_executor(
+        None, lambda: service.get_coach_conversation(conv_id)
+    )
+    if not conv:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+
+    # Persist user message
+    await asyncio.get_event_loop().run_in_executor(
+        None, lambda: service.add_coach_message(conv_id, "user", body.message)
+    )
+
+    # Build message history for the API
+    existing_msgs = conv.get("messages", [])
+    api_messages: list[dict] = []
+
+    # If this is the first user message, prepend the snapshot context
+    if not existing_msgs:
+        from macrofactor_scraper.ai import _build_snapshot, build_chat_system_message
+        import datetime as _dt
+        for_date_str = conv.get("for_date") or _dt.date.today().isoformat()
+        try:
+            for_date = date.fromisoformat(for_date_str)
+        except ValueError:
+            for_date = date.today()
+        snapshot = await asyncio.to_thread(_build_snapshot, service, for_date)
+        framing = conv.get("framing") or "free"
+        context_block = build_chat_system_message(snapshot, framing)
+        api_messages.append({"role": "user", "content": context_block})
+        api_messages.append({"role": "assistant", "content": "Understood. I have reviewed your health data. What would you like to know?"})
+
+    for msg in existing_msgs:
+        if msg["role"] in ("user", "assistant"):
+            api_messages.append({"role": msg["role"], "content": msg["content"]})
+
+    api_messages.append({"role": "user", "content": body.message})
+
+    from macrofactor_scraper.ai import stream_chat, RateLimitError
+
+    async def sse_generator() -> AsyncIterator[str]:
+        collected: list[str] = []
+        total_tokens = 0
+        try:
+            async for chunk in stream_chat(api_messages, settings.anthropic_api_key):
+                data = json.loads(chunk)
+                if "delta" in data:
+                    collected.append(data["delta"])
+                elif data.get("done"):
+                    total_tokens = data.get("tokens", 0)
+                yield f"data: {chunk}\n\n"
+        except RateLimitError as exc:
+            yield f"data: {json.dumps({'error': str(exc)})}\n\n"
+            return
+        except Exception as exc:
+            yield f"data: {json.dumps({'error': 'Stream error'})}\n\n"
+            return
+        # Persist assistant reply
+        full_reply = "".join(collected)
+        if full_reply:
+            await asyncio.get_event_loop().run_in_executor(
+                None,
+                lambda: service.add_coach_message(
+                    conv_id, "assistant", full_reply,
+                    tokens_used=total_tokens, model="claude-haiku-4-5-20251001"
+                ),
+            )
+
+    return StreamingResponse(
+        sse_generator(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
 @app.get("/v1/insights/readiness/{record_date}", response_model=ReadinessReport, dependencies=[Depends(require_private_access)])
 async def insights_readiness(
     record_date: date,
@@ -1074,6 +1213,40 @@ async def insights_training_call(
     from macrofactor_scraper.insights import recommend_training
     return await asyncio.get_event_loop().run_in_executor(
         None, recommend_training, service, record_date
+    )
+
+
+@app.get("/v1/insights/smart/{record_date}", response_model=SmartInsightsResponse, dependencies=[Depends(require_private_access)])
+async def insights_smart(
+    record_date: date,
+    service: HealthAutoExportService = Depends(get_health_export_service),
+) -> SmartInsightsResponse:
+    from macrofactor_scraper.smart_insights import compute_smart_insights
+    insights = await asyncio.get_event_loop().run_in_executor(
+        None, compute_smart_insights, service, record_date
+    )
+    return SmartInsightsResponse(
+        date=record_date.isoformat(),
+        insights=insights,
+    )
+
+
+@app.get("/v1/body-composition", response_model=BodyCompositionResponse, dependencies=[Depends(require_private_access)])
+async def body_composition(
+    start: date | None = None,
+    end: date | None = None,
+    service: HealthAutoExportService = Depends(get_health_export_service),
+) -> BodyCompositionResponse:
+    import datetime as _dt
+    end_date = end or _dt.date.today()
+    start_date = start or (end_date - _dt.timedelta(days=90))
+    points = await asyncio.get_event_loop().run_in_executor(
+        None, lambda: service.get_body_composition(start_date, end_date)
+    )
+    from macrofactor_scraper.models import BodyCompositionPoint
+    return BodyCompositionResponse(
+        count=len(points),
+        points=[BodyCompositionPoint(**p) for p in points],
     )
 
 
