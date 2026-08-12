@@ -1536,6 +1536,71 @@ class HealthAutoExportService:
                     ON strong_workout_sessions (workout_date, started_at);
                 CREATE INDEX IF NOT EXISTS idx_strong_sets_exercise_date
                     ON strong_workout_sets (exercise_name, workout_date);
+
+                CREATE TABLE IF NOT EXISTS activities (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    source TEXT NOT NULL CHECK (source IN ('garmin', 'manual')),
+                    garmin_activity_id INTEGER UNIQUE,
+                    sport TEXT NOT NULL,
+                    activity_date TEXT NOT NULL,
+                    start_time TEXT,
+                    duration_seconds REAL,
+                    distance_m REAL,
+                    calories REAL,
+                    avg_hr REAL,
+                    max_hr REAL,
+                    aerobic_te REAL,
+                    anaerobic_te REAL,
+                    training_load REAL,
+                    load_source TEXT,
+                    rpe REAL,
+                    perceived_intensity TEXT,
+                    pool_length_m REAL,
+                    laps INTEGER,
+                    total_strokes INTEGER,
+                    avg_swolf REAL,
+                    avg_pace_s_per_100m REAL,
+                    stroke_type TEXT,
+                    hr_zones_json TEXT,
+                    laps_json TEXT,
+                    notes TEXT,
+                    raw_json TEXT NOT NULL DEFAULT '{}',
+                    fingerprint TEXT NOT NULL UNIQUE,
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                );
+                CREATE INDEX IF NOT EXISTS idx_activities_date ON activities (activity_date, start_time);
+                CREATE INDEX IF NOT EXISTS idx_activities_sport ON activities (sport, activity_date);
+
+                CREATE TABLE IF NOT EXISTS performance_goals (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name TEXT NOT NULL,
+                    goal_type TEXT NOT NULL,
+                    sport TEXT,
+                    target_value REAL,
+                    unit TEXT,
+                    target_date TEXT,
+                    active INTEGER NOT NULL DEFAULT 1,
+                    notes TEXT,
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                );
+
+                CREATE TABLE IF NOT EXISTS daily_training_recommendations (
+                    rec_date TEXT PRIMARY KEY,
+                    recommendation TEXT NOT NULL,
+                    model TEXT NOT NULL,
+                    tokens_used INTEGER NOT NULL DEFAULT 0,
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                );
+
+                CREATE TABLE IF NOT EXISTS performance_weekly_reviews (
+                    week_start_date TEXT PRIMARY KEY,
+                    narrative TEXT NOT NULL,
+                    highlights_json TEXT NOT NULL DEFAULT '[]',
+                    model TEXT NOT NULL,
+                    tokens_used INTEGER NOT NULL DEFAULT 0,
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                );
                 """
             )
             # Migrations for existing DBs
@@ -2018,6 +2083,110 @@ class HealthAutoExportService:
                 r["highlights"] = json.loads(r.pop("highlights_json", "[]"))
                 result.append(r)
             return result
+
+    # ─── Activities ──────────────────────────────────────────────────────────
+
+    def upsert_garmin_activity(self, payload: dict) -> bool:
+        from macrofactor_scraper._activities import upsert_garmin_activity as _upsert
+        self._ensure_schema()
+        with self._connect() as conn:
+            return _upsert(conn, payload)
+
+    def get_activity_by_garmin_id(self, garmin_activity_id: int) -> dict | None:
+        from macrofactor_scraper._activities import get_activity_by_garmin_id as _get
+        self._ensure_schema()
+        with self._connect() as conn:
+            return _get(conn, garmin_activity_id)
+
+    def list_activities(self, start: str, end: str, sport: str | None = None, limit: int = 200) -> list[dict]:
+        from macrofactor_scraper._activities import list_activities as _list
+        self._ensure_schema()
+        with self._connect() as conn:
+            return _list(conn, start, end, sport, limit)
+
+    def get_activity(self, activity_id: int) -> dict | None:
+        from macrofactor_scraper._activities import get_activity as _get
+        self._ensure_schema()
+        with self._connect() as conn:
+            return _get(conn, activity_id)
+
+    def create_manual_activity(self, payload: dict) -> dict:
+        from macrofactor_scraper._activities import create_manual_activity as _create
+        self._ensure_schema()
+        with self._connect() as conn:
+            return _create(conn, payload)
+
+    def update_manual_activity(self, activity_id: int, payload: dict) -> dict | None:
+        from macrofactor_scraper._activities import update_manual_activity as _update
+        self._ensure_schema()
+        with self._connect() as conn:
+            return _update(conn, activity_id, payload)
+
+    def delete_activity(self, activity_id: int, force: bool = False) -> bool:
+        from macrofactor_scraper._activities import delete_activity as _delete
+        self._ensure_schema()
+        with self._connect() as conn:
+            return _delete(conn, activity_id, force)
+
+    # ─── Performance goals ────────────────────────────────────────────────────
+
+    def list_goals(self, active_only: bool = True) -> list[dict]:
+        from macrofactor_scraper._activities import list_goals as _list
+        self._ensure_schema()
+        with self._connect() as conn:
+            return _list(conn, active_only)
+
+    def create_goal(self, payload: dict) -> dict:
+        from macrofactor_scraper._activities import create_goal as _create
+        self._ensure_schema()
+        with self._connect() as conn:
+            return _create(conn, payload)
+
+    def update_goal(self, goal_id: int, payload: dict) -> dict | None:
+        from macrofactor_scraper._activities import update_goal as _update
+        self._ensure_schema()
+        with self._connect() as conn:
+            return _update(conn, goal_id, payload)
+
+    def delete_goal(self, goal_id: int) -> bool:
+        from macrofactor_scraper._activities import delete_goal as _delete
+        self._ensure_schema()
+        with self._connect() as conn:
+            return _delete(conn, goal_id)
+
+    # ─── Training recommendations ─────────────────────────────────────────────
+
+    def get_training_recommendation(self, rec_date: str) -> dict | None:
+        from macrofactor_scraper._activities import get_training_recommendation as _get
+        self._ensure_schema()
+        with self._connect() as conn:
+            return _get(conn, rec_date)
+
+    def upsert_training_recommendation(self, rec_date: str, recommendation: str, model: str, tokens_used: int) -> None:
+        from macrofactor_scraper._activities import upsert_training_recommendation as _upsert
+        self._ensure_schema()
+        with self._connect() as conn:
+            _upsert(conn, rec_date, recommendation, model, tokens_used)
+
+    # ─── Performance weekly reviews ───────────────────────────────────────────
+
+    def get_performance_review(self, week_start_date: str) -> dict | None:
+        from macrofactor_scraper._activities import get_performance_review as _get
+        self._ensure_schema()
+        with self._connect() as conn:
+            return _get(conn, week_start_date)
+
+    def upsert_performance_review(self, week_start_date: str, narrative: str, highlights: list, model: str, tokens_used: int) -> None:
+        from macrofactor_scraper._activities import upsert_performance_review as _upsert
+        self._ensure_schema()
+        with self._connect() as conn:
+            _upsert(conn, week_start_date, narrative, highlights, model, tokens_used)
+
+    def list_performance_reviews(self, limit: int = 52) -> list[dict]:
+        from macrofactor_scraper._activities import list_performance_reviews as _list
+        self._ensure_schema()
+        with self._connect() as conn:
+            return _list(conn, limit)
 
     # ─── Internal helpers ────────────────────────────────────────────────────
 

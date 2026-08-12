@@ -17,6 +17,12 @@ import { Photos } from "./pages/photos";
 import { Achievements } from "./pages/achievements";
 import { Recaps } from "./pages/recaps";
 import { Insights } from "./pages/insights";
+import { Performance } from "./pages/performance";
+import { Activities } from "./pages/activities";
+import { ActivityDetail } from "./pages/activity-detail";
+import { Swim } from "./pages/swim";
+import { Load } from "./pages/load";
+import { Goals } from "./pages/goals";
 
 export const router = createBrowserRouter([
   {
@@ -40,6 +46,12 @@ export const router = createBrowserRouter([
       { path: "achievements", element: <Achievements /> },
       { path: "recaps", element: <Recaps /> },
       { path: "insights", element: <Insights /> },
+      { path: "performance", element: <Performance /> },
+      { path: "activities", element: <Activities /> },
+      { path: "activities/:id", element: <ActivityDetail /> },
+      { path: "swim", element: <Swim /> },
+      { path: "load", element: <Load /> },
+      { path: "goals", element: <Goals /> },
     ],
   },
 ]);

@@ -1,4 +1,7 @@
 import type {
+  Activity,
+  ActivityCreate,
+  ActivityListResponse,
   AiAnalyseResponse,
   BodyCompositionResponse,
   BodyMeasurement,
@@ -13,10 +16,17 @@ import type {
   DailyLog,
   DailyLogListResponse,
   DailyLogUpsert,
+  DailyRecommendationResponse,
   DashboardSummaryResponse,
   DiagnosticsResponse,
+  FuelingSummaryResponse,
   IngestStatus,
   MetricCatalogResponse,
+  PerformanceGoal,
+  PerformanceGoalCreate,
+  PerformanceGoalListResponse,
+  PerformanceReviewListResponse,
+  PerformanceReviewResponse,
   PhotoListResponse,
   Preferences,
   ReadinessReport,
@@ -29,6 +39,8 @@ import type {
   StrongSessionListResponse,
   StrongSessionRecord,
   StrongSummaryResponse,
+  SwimAnalyticsResponse,
+  TrainingLoadResponse,
   WorkoutListResponse,
 } from "./types";
 
@@ -301,6 +313,65 @@ export const api = {
       const qs = p.toString();
       return request<BodyCompositionResponse>(`/v1/body-composition${qs ? `?${qs}` : ""}`);
     },
+  },
+
+  activities: {
+    list: (options: { start?: string; end?: string; sport?: string } = {}) => {
+      const p = new URLSearchParams();
+      if (options.start) p.set("start", options.start);
+      if (options.end) p.set("end", options.end);
+      if (options.sport) p.set("sport", options.sport);
+      const qs = p.toString();
+      return request<ActivityListResponse>(`/v1/activities${qs ? `?${qs}` : ""}`);
+    },
+    get: (id: number) => request<Activity>(`/v1/activities/${id}`),
+    create: (data: ActivityCreate) =>
+      request<Activity>("/v1/activities", { method: "POST", body: JSON.stringify(data) }),
+    update: (id: number, data: Partial<ActivityCreate>) =>
+      request<Activity>(`/v1/activities/${id}`, { method: "PUT", body: JSON.stringify(data) }),
+    delete: (id: number) =>
+      request<{ deleted: boolean }>(`/v1/activities/${id}`, { method: "DELETE" }),
+    backfill: (days: number, details = false) =>
+      request<{ ok: boolean; inserted?: number; fetched?: number }>(`/v1/activities/backfill?days=${days}&details=${details}`, { method: "POST" }),
+    syncGarmin: (days_back = 2) =>
+      request<{ ok: boolean; inserted?: number }>(`/v1/garmin/sync-activities?days_back=${days_back}`, { method: "POST" }),
+  },
+
+  performance: {
+    load: (options: { start?: string; end?: string } = {}) => {
+      const p = new URLSearchParams();
+      if (options.start) p.set("start", options.start);
+      if (options.end) p.set("end", options.end);
+      const qs = p.toString();
+      return request<TrainingLoadResponse>(`/v1/performance/load${qs ? `?${qs}` : ""}`);
+    },
+    swim: (options: { start?: string; end?: string } = {}) => {
+      const p = new URLSearchParams();
+      if (options.start) p.set("start", options.start);
+      if (options.end) p.set("end", options.end);
+      const qs = p.toString();
+      return request<SwimAnalyticsResponse>(`/v1/performance/swim${qs ? `?${qs}` : ""}`);
+    },
+    fueling: (for_date?: string) =>
+      request<FuelingSummaryResponse>(`/v1/performance/fueling${for_date ? `?for_date=${for_date}` : ""}`),
+    dailyRecommendation: (for_date?: string) =>
+      request<DailyRecommendationResponse>(`/v1/performance/daily-recommendation${for_date ? `?for_date=${for_date}` : ""}`),
+    reviews: () => request<PerformanceReviewListResponse>("/v1/performance/reviews"),
+    generateReview: (week_start?: string) =>
+      request<PerformanceReviewResponse>(
+        `/v1/performance/reviews/generate${week_start ? `?week_start=${week_start}` : ""}`,
+        { method: "POST" }
+      ),
+  },
+
+  goals: {
+    list: (active_only = true) => request<PerformanceGoalListResponse>(`/v1/goals?active_only=${active_only}`),
+    create: (data: PerformanceGoalCreate) =>
+      request<PerformanceGoal>("/v1/goals", { method: "POST", body: JSON.stringify(data) }),
+    update: (id: number, data: Partial<PerformanceGoalCreate & { active: boolean }>) =>
+      request<PerformanceGoal>(`/v1/goals/${id}`, { method: "PUT", body: JSON.stringify(data) }),
+    delete: (id: number) =>
+      request<{ deleted: boolean }>(`/v1/goals/${id}`, { method: "DELETE" }),
   },
 
   weeklyRecap: {

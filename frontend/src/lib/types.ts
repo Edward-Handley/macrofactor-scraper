@@ -648,3 +648,151 @@ export interface BodyCompositionResponse {
   count: number;
   points: BodyCompositionPoint[];
 }
+
+// ─── Activities ───────────────────────────────────────────────────────────────
+
+export interface Activity {
+  id: number;
+  source: "garmin" | "manual";
+  garmin_activity_id: number | null;
+  sport: string;
+  activity_date: string;
+  start_time: string | null;
+  duration_seconds: number | null;
+  distance_m: number | null;
+  calories: number | null;
+  avg_hr: number | null;
+  max_hr: number | null;
+  aerobic_te: number | null;
+  anaerobic_te: number | null;
+  training_load: number | null;
+  load_source: string | null;
+  rpe: number | null;
+  perceived_intensity: string | null;
+  pool_length_m: number | null;
+  laps: number | null;
+  total_strokes: number | null;
+  avg_swolf: number | null;
+  avg_pace_s_per_100m: number | null;
+  stroke_type: string | null;
+  hr_zones: Array<{ zone: number; secs: number }> | null;
+  laps_data: Array<{ lap: number; distance_m?: number; duration_s?: number; strokes?: number; swolf?: number; pace_s_per_100m?: number }> | null;
+  notes: string | null;
+  created_at: string | null;
+  updated_at: string | null;
+}
+
+export interface ActivityCreate {
+  sport: string;
+  activity_date: string;
+  start_time?: string | null;
+  duration_minutes: number;
+  distance_m?: number | null;
+  calories?: number | null;
+  rpe?: number | null;
+  perceived_intensity?: string | null;
+  notes?: string | null;
+}
+
+export interface ActivityListResponse {
+  count: number;
+  activities: Activity[];
+}
+
+// ─── Training load / ACWR ─────────────────────────────────────────────────────
+
+export interface TrainingLoadPoint {
+  date: string;
+  load: number;
+  atl: number;
+  ctl: number;
+  acwr: number | null;
+  sources: string[];
+}
+
+export interface TrainingLoadResponse {
+  series: TrainingLoadPoint[];
+  current_acwr: number | null;
+  status: "detraining" | "optimal" | "caution" | "high_risk" | "unknown";
+}
+
+// ─── Swim analytics ───────────────────────────────────────────────────────────
+
+export interface SwimWeeklyVolume {
+  week: string;
+  volume_m: number;
+  sessions: number;
+}
+
+export interface SwimAnalyticsResponse {
+  weekly_volume: SwimWeeklyVolume[];
+  pace_series: Array<{ date: string; pace_s_per_100m: number }>;
+  swolf_series: Array<{ date: string; swolf: number }>;
+  stroke_mix: Array<{ stroke: string; count: number }>;
+  best_pace_s_per_100m: number | null;
+  total_sessions: number;
+  total_volume_m: number;
+}
+
+// ─── Performance goals ────────────────────────────────────────────────────────
+
+export interface PerformanceGoal {
+  id: number;
+  name: string;
+  goal_type: string;
+  sport: string | null;
+  target_value: number | null;
+  unit: string | null;
+  target_date: string | null;
+  active: boolean;
+  notes: string | null;
+  created_at: string | null;
+}
+
+export interface PerformanceGoalCreate {
+  name: string;
+  goal_type: string;
+  sport?: string | null;
+  target_value?: number | null;
+  unit?: string | null;
+  target_date?: string | null;
+  notes?: string | null;
+}
+
+export interface PerformanceGoalListResponse {
+  count: number;
+  goals: PerformanceGoal[];
+}
+
+// ─── Performance AI ───────────────────────────────────────────────────────────
+
+export interface DailyRecommendationResponse {
+  date: string;
+  recommendation: string;
+  model: string;
+  tokens_used: number;
+  created_at: string | null;
+}
+
+export interface PerformanceReviewResponse {
+  week_start_date: string;
+  narrative: string;
+  highlights: string[];
+  model: string;
+  tokens_used: number;
+  created_at: string | null;
+}
+
+export interface PerformanceReviewListResponse {
+  count: number;
+  reviews: PerformanceReviewResponse[];
+}
+
+// ─── Fueling ─────────────────────────────────────────────────────────────────
+
+export interface FuelingSummaryResponse {
+  date: string;
+  calories: number | null;
+  protein: number | null;
+  training_load: number;
+}

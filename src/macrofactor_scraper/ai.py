@@ -166,6 +166,16 @@ _FRAMING_INTRO: dict[str, str] = {
     "plateau": "Weight progress has stalled. Diagnose causes and suggest concrete adjustments.",
     "cut_reassess": "Reassess the current cut phase: rate of loss, muscle retention, recovery quality.",
     "free": "Answer freely based on the data provided.",
+    "performance_day": (
+        "You are a performance coach reviewing today's training context. "
+        "Based on the athlete's readiness, recent load (ACWR), and activities, "
+        "recommend today's training: what to do, how hard, and why. Be concise and specific."
+    ),
+    "performance_week": (
+        "You are a performance coach doing a weekly training review. "
+        "Analyse load progression, swim volume and pace trends, recovery quality, and goal progress. "
+        "Set 2-3 specific targets for next week."
+    ),
 }
 
 
@@ -318,6 +328,203 @@ async def generate_weekly_recap(
     return {
         "week_start_date": week_start.isoformat(),
         "week_end_date": week_end.isoformat(),
+        "narrative": narrative,
+        "highlights": highlights,
+        "model": "claude-haiku-4-5-20251001",
+        "tokens_used": tokens_used,
+    }
+
+
+def _build_performance_snapshot(service: "HealthAutoExportService", up_to: date) -> str:
+    """Build a 14-day performance snapshot: activities, load/ACWR, recovery, goals."""
+    start = up_to - timedelta(days=13)
+    from macrofactor_scraper.performance import daily_load_series, compute_acwr, swim_analytics
+    from macrofactor_scraper._activities import list_activities as _list_acts
+
+    # Daily load + ACWR
+    # Need 28d window for CTL
+    load_start = up_to - timedelta(days=27)
+    all_series = daily_load_series(service, load_start, up_to)
+    acwr_data = compute_acwr(all_series)
+    series_14d = acwr_data["series"][-14:]
+
+    # Activities for period
+    with service._connect() as conn:
+        act_rows = conn.execute(
+            """
+            SELECT sport, activity_date, duration_seconds, distance_m,
+                   training_load, load_source, avg_pace_s_per_100m, avg_hr, avg_swolf
+            FROM activities
+            WHERE activity_date BETWEEN ? AND ?
+            ORDER BY activity_date ASC
+            """,
+            (start.isoformat(), up_to.isoformat()),
+        ).fetchall()
+    acts_by_date: dict[str, list] = {}
+    for r in act_rows:
+        acts_by_date.setdefault(r["activity_date"], []).append(dict(r))
+
+    # Garmin health metrics
+    with service._connect() as conn:
+        health_rows = conn.execute(
+            """
+            SELECT metric_name, quantity, record_date FROM health_records
+            WHERE source = 'Garmin'
+              AND metric_name IN ('hrv_overnight', 'resting_heart_rate', 'sleep_minutes',
+                                   'training_readiness_score', 'body_battery_high')
+              AND record_date BETWEEN ? AND ?
+            ORDER BY record_date ASC
+            """,
+            (start.isoformat(), up_to.isoformat()),
+        ).fetchall()
+    health_by_date: dict[str, dict] = {}
+    for r in health_rows:
+        health_by_date.setdefault(r["record_date"], {})[r["metric_name"]] = float(r["quantity"])
+
+    # Active goals
+    with service._connect() as conn:
+        goal_rows = conn.execute(
+            "SELECT name, goal_type, target_value, unit, target_date FROM performance_goals WHERE active = 1"
+        ).fetchall()
+    goals = [dict(r) for r in goal_rows]
+
+    lines: list[str] = [f"=== 14-Day Performance Snapshot (up to {up_to.isoformat()}) ===\n"]
+
+    for entry in series_14d:
+        d = entry["date"]
+        parts: list[str] = [d]
+        if entry["load"] > 0:
+            parts.append(f"load={entry['load']:.0f}")
+        if entry["atl"] > 0:
+            parts.append(f"ATL={entry['atl']:.0f}")
+        if entry["acwr"] is not None:
+            parts.append(f"ACWR={entry['acwr']:.2f}")
+        # Activities
+        for act in acts_by_date.get(d, []):
+            sport = act["sport"]
+            dur_min = round(act["duration_seconds"] / 60, 0) if act.get("duration_seconds") else None
+            act_parts = [sport]
+            if dur_min:
+                act_parts.append(f"{dur_min:.0f}min")
+            if act.get("distance_m"):
+                act_parts.append(f"{act['distance_m']:.0f}m")
+            if act.get("avg_pace_s_per_100m"):
+                m = int(act["avg_pace_s_per_100m"] // 60)
+                s = int(act["avg_pace_s_per_100m"] % 60)
+                act_parts.append(f"{m}:{s:02d}/100m")
+            if act.get("avg_swolf"):
+                act_parts.append(f"SWOLF={act['avg_swolf']:.0f}")
+            parts.append("[" + " ".join(act_parts) + "]")
+        # Recovery
+        health = health_by_date.get(d, {})
+        if health.get("hrv_overnight"):
+            parts.append(f"HRV={health['hrv_overnight']:.0f}ms")
+        if health.get("resting_heart_rate"):
+            parts.append(f"RHR={health['resting_heart_rate']:.0f}bpm")
+        if health.get("sleep_minutes"):
+            parts.append(f"sleep={health['sleep_minutes']/60:.1f}h")
+        if health.get("training_readiness_score"):
+            parts.append(f"readiness={health['training_readiness_score']:.0f}")
+        lines.append("  ".join(parts))
+
+    # ACWR status
+    lines.append(f"\nCurrent ACWR: {acwr_data['current_acwr']:.2f} ({acwr_data['status']})" if acwr_data["current_acwr"] else "\nACWR: insufficient data")
+
+    # Goals
+    if goals:
+        lines.append("\n=== Active Goals ===")
+        for g in goals:
+            goal_str = g["name"]
+            if g.get("target_value") and g.get("unit"):
+                goal_str += f" — target {g['target_value']} {g['unit']}"
+            if g.get("target_date"):
+                goal_str += f" by {g['target_date']}"
+            lines.append(goal_str)
+
+    return "\n".join(lines)
+
+
+async def generate_daily_recommendation(
+    service: "HealthAutoExportService",
+    for_date: date,
+    api_key: str,
+) -> dict:
+    """Generate a short daily training recommendation for performance mode."""
+    snapshot = await asyncio.to_thread(_build_performance_snapshot, service, for_date)
+
+    prompt = (
+        "You are a performance coach. Based on the athlete's 14-day data below, "
+        "write a concise daily training recommendation (under 150 words). "
+        "Cover: train or rest, intensity/effort level, suggested session type or specific set, "
+        "and the main reason. Be direct and specific.\n\n"
+        f"{snapshot}"
+    )
+
+    import anthropic
+    client = anthropic.Anthropic(api_key=api_key)
+    response = await asyncio.to_thread(
+        lambda: client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=300,
+            messages=[{"role": "user", "content": prompt}],
+        )
+    )
+    text = response.content[0].text if response.content else ""
+    tokens_used = (response.usage.input_tokens or 0) + (response.usage.output_tokens or 0)
+
+    return {
+        "recommendation": text,
+        "model": "claude-haiku-4-5-20251001",
+        "tokens_used": tokens_used,
+    }
+
+
+async def generate_performance_review(
+    service: "HealthAutoExportService",
+    week_start: date,
+    api_key: str,
+) -> dict:
+    """Generate a weekly performance review (parallel to generate_weekly_recap)."""
+    week_end = week_start + timedelta(days=6)
+    snapshot = await asyncio.to_thread(_build_performance_snapshot, service, week_end)
+
+    prompt = (
+        "You are a performance coach writing a weekly training review. "
+        "Respond in plain markdown with NO headers — flowing prose paragraphs, under 200 words. "
+        "Be specific with numbers. Then output a JSON array of 3–5 short highlight strings.\n\n"
+        f"{snapshot}\n\n---\n"
+        "Write a 3–4 sentence weekly training narrative: load progression, swim volume/pace, "
+        "recovery quality, key win or concern, and one concrete focus for next week. "
+        "Then output a line starting with ```json followed by the highlights array."
+    )
+
+    import anthropic
+    client = anthropic.Anthropic(api_key=api_key)
+    response = await asyncio.to_thread(
+        lambda: client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=600,
+            messages=[{"role": "user", "content": prompt}],
+        )
+    )
+    raw = response.content[0].text if response.content else ""
+    tokens_used = (response.usage.input_tokens or 0) + (response.usage.output_tokens or 0)
+
+    narrative = raw
+    highlights: list[str] = []
+    if "```json" in raw:
+        parts = raw.split("```json", 1)
+        narrative = parts[0].strip()
+        json_block = parts[1].split("```")[0].strip()
+        try:
+            parsed = json.loads(json_block)
+            if isinstance(parsed, list):
+                highlights = [str(h) for h in parsed]
+        except Exception:
+            pass
+
+    return {
+        "week_start_date": week_start.isoformat(),
         "narrative": narrative,
         "highlights": highlights,
         "model": "claude-haiku-4-5-20251001",

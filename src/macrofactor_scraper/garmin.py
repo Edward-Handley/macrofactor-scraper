@@ -1,10 +1,11 @@
-"""Garmin Connect sync — pulls sleep, RHR, HRV, steps into health_records."""
+"""Garmin Connect sync — pulls sleep, RHR, HRV, steps, and activities into health_records/activities."""
 from __future__ import annotations
 
 import asyncio
 import base64
 import hashlib
 import hmac as hmac_mod
+import json
 import logging
 import struct
 import time
@@ -279,6 +280,131 @@ def _extract_spo2(data: dict) -> dict[str, float | None]:
         "spo2_avg": avg if (avg is not None and avg > 0) else None,
         "spo2_lowest": low if (low is not None and low > 0) else None,
     }
+
+
+_SWIM_SPORT_KEYS: frozenset[str] = frozenset({"lap_swimming", "open_water_swimming", "pool_swimming", "swim"})
+
+
+def _extract_activity_summary(item: dict) -> dict:
+    """Extract a normalised activity summary from a garminconnect activity list item."""
+    sport = (
+        _safe_float(item, "activityType", "typeKey") or
+        item.get("activityType", {}).get("typeKey") if isinstance(item.get("activityType"), dict) else None
+    ) or str(item.get("activityType", "unknown"))
+    if isinstance(sport, float):
+        sport = "unknown"
+
+    start_time = item.get("startTimeLocal") or item.get("startTimeGMT") or ""
+    activity_date = start_time[:10] if start_time else None
+
+    duration_seconds = _safe_float(item, "duration") or _safe_float(item, "elapsedDuration")
+    distance_m = _safe_float(item, "distance")
+    calories = _safe_float(item, "calories") or _safe_float(item, "activeKilocalories")
+    avg_hr = _safe_float(item, "averageHR")
+    max_hr = _safe_float(item, "maxHR")
+    aerobic_te = _safe_float(item, "aerobicTrainingEffect")
+    anaerobic_te = _safe_float(item, "anaerobicTrainingEffect")
+    training_load = _safe_float(item, "activityTrainingLoad")
+
+    # Swim-specific
+    pool_length_m: float | None = None
+    raw_pl = item.get("poolLength")
+    if isinstance(raw_pl, dict):
+        pool_length_m = _safe_float(raw_pl, "value")
+    elif raw_pl is not None:
+        try:
+            pool_length_m = float(raw_pl)
+        except (TypeError, ValueError):
+            pass
+
+    laps = _safe_float(item, "lapCount") or _safe_float(item, "numberOfActiveLengths")
+    if laps is not None:
+        laps = int(laps)  # type: ignore[assignment]
+
+    total_strokes = _safe_float(item, "strokes") or _safe_float(item, "avgStrokes")
+    if total_strokes is not None:
+        total_strokes = int(total_strokes)  # type: ignore[assignment]
+
+    avg_swolf = _safe_float(item, "averageSwolf") or _safe_float(item, "avgSwolf")
+
+    # Pace per 100m from averageSpeed (m/s): pace_s_per_100m = 100 / speed_mps
+    avg_speed_mps = _safe_float(item, "averageSpeed")
+    avg_pace_s_per_100m: float | None = None
+    if avg_speed_mps is not None and avg_speed_mps > 0:
+        avg_pace_s_per_100m = round(100.0 / avg_speed_mps, 1)
+
+    stroke_type = item.get("swimStroke") or item.get("strokeType")
+    if isinstance(stroke_type, dict):
+        stroke_type = stroke_type.get("key") or stroke_type.get("typeKey")
+
+    return {
+        "garmin_activity_id": item.get("activityId"),
+        "sport": sport,
+        "activity_date": activity_date,
+        "start_time": start_time,
+        "duration_seconds": duration_seconds,
+        "distance_m": distance_m,
+        "calories": calories,
+        "avg_hr": avg_hr,
+        "max_hr": max_hr,
+        "aerobic_te": aerobic_te,
+        "anaerobic_te": anaerobic_te,
+        "training_load": training_load,
+        "load_source": "garmin" if training_load is not None else None,
+        "pool_length_m": pool_length_m,
+        "laps": laps,
+        "total_strokes": total_strokes,
+        "avg_swolf": avg_swolf,
+        "avg_pace_s_per_100m": avg_pace_s_per_100m,
+        "stroke_type": stroke_type,
+        "raw": item,
+    }
+
+
+def _extract_hr_zones(data: Any) -> list[dict]:
+    """Extract HR zone breakdown from get_activity_hr_in_timezones() response."""
+    zones: list[dict] = []
+    items = data if isinstance(data, list) else ([data] if isinstance(data, dict) else [])
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        zone_num = _safe_float(item, "zoneNumber") or _safe_float(item, "zone")
+        secs = _safe_float(item, "secsInZone") or _safe_float(item, "timeInZone")
+        if zone_num is not None and secs is not None:
+            zones.append({"zone": int(zone_num), "secs": int(secs)})
+    return zones
+
+
+def _extract_swim_laps(data: Any) -> list[dict]:
+    """Extract swim lap details from get_activity_splits() response."""
+    laps: list[dict] = []
+    if isinstance(data, dict):
+        items = data.get("lapDTOs") or data.get("laps") or []
+    elif isinstance(data, list):
+        items = data
+    else:
+        return laps
+    for i, item in enumerate(items):
+        if not isinstance(item, dict):
+            continue
+        lap: dict = {"lap": i + 1}
+        dist = _safe_float(item, "distance")
+        if dist is not None:
+            lap["distance_m"] = dist
+        dur = _safe_float(item, "duration") or _safe_float(item, "elapsedDuration")
+        if dur is not None:
+            lap["duration_s"] = dur
+        strokes = _safe_float(item, "strokes")
+        if strokes is not None:
+            lap["strokes"] = int(strokes)
+        swolf = _safe_float(item, "averageSwolf") or _safe_float(item, "swolf")
+        if swolf is not None:
+            lap["swolf"] = swolf
+        speed = _safe_float(item, "averageSpeed")
+        if speed is not None and speed > 0:
+            lap["pace_s_per_100m"] = round(100.0 / speed, 1)
+        laps.append(lap)
+    return laps
 
 
 def _extract_training_readiness(data: Any) -> dict[str, float | None]:
@@ -601,6 +727,74 @@ class GarminSyncService:
             d = today - timedelta(days=offset)
             self.sync_date(d, service)
 
+    def sync_activities(self, service: Any, days_back: int = 7, fetch_details: bool = True) -> dict:
+        """Sync per-activity data for the last days_back days. Returns counts dict."""
+        if not self._ensure_client():
+            return {"ok": False, "error": self._last_error}
+
+        today = date.today()
+        start = today - timedelta(days=days_back)
+        counts = {"fetched": 0, "inserted": 0, "updated": 0, "detail_calls": 0}
+
+        try:
+            activities_raw = self._client.get_activities_by_date(start.isoformat(), today.isoformat())
+        except Exception as exc:
+            logger.warning("Garmin get_activities_by_date failed: %s", exc)
+            return {"ok": False, "error": str(exc)}
+
+        if not isinstance(activities_raw, list):
+            activities_raw = []
+
+        counts["fetched"] = len(activities_raw)
+
+        for item in activities_raw:
+            if not isinstance(item, dict):
+                continue
+            garmin_id = item.get("activityId")
+            if garmin_id is None:
+                continue
+
+            summary = _extract_activity_summary(item)
+
+            # Only fetch detail endpoints for NEW activities not yet in DB
+            existing = service.get_activity_by_garmin_id(int(garmin_id))
+            is_new = existing is None
+
+            if is_new and fetch_details:
+                # HR zones — always try
+                try:
+                    time.sleep(0.5)
+                    hr_data = self._client.get_activity_hr_in_timezones(int(garmin_id))
+                    summary["hr_zones"] = _extract_hr_zones(hr_data)
+                    counts["detail_calls"] += 1
+                except Exception as exc:
+                    logger.debug("Garmin HR zones fetch failed for activity %s: %s", garmin_id, exc)
+                    summary["hr_zones"] = None
+
+                # Swim laps — swim activities only
+                sport = summary.get("sport", "")
+                if isinstance(sport, str) and any(s in sport.lower() for s in ("swim", "pool")):
+                    try:
+                        time.sleep(0.5)
+                        splits_data = self._client.get_activity_splits(int(garmin_id))
+                        summary["laps"] = _extract_swim_laps(splits_data)
+                        counts["detail_calls"] += 1
+                    except Exception as exc:
+                        logger.debug("Garmin swim splits fetch failed for activity %s: %s", garmin_id, exc)
+                        summary["laps"] = None
+            else:
+                summary.setdefault("hr_zones", None)
+                summary.setdefault("laps", None)
+
+            inserted = service.upsert_garmin_activity(summary)
+            if inserted:
+                counts["inserted"] += 1
+            elif not is_new:
+                counts["updated"] += 1
+
+        logger.info("Garmin activity sync: %s", counts)
+        return {"ok": True, **counts}
+
     def debug_date(self, d: date) -> dict[str, Any]:
         """Fetch Garmin payloads for a date and return only parser/debug summaries."""
         if not self._ensure_client():
@@ -655,5 +849,11 @@ async def garmin_sync_loop(app: Any, interval_hours: int = 6) -> None:
                 try:
                     await asyncio.get_event_loop().run_in_executor(None, garmin.sync_recent, service)
                 except Exception as exc:
-                    logger.warning("Garmin background sync failed: %s", exc)
+                    logger.warning("Garmin daily metrics sync failed: %s", exc)
+                try:
+                    await asyncio.get_event_loop().run_in_executor(
+                        None, lambda: garmin.sync_activities(service, days_back=2)
+                    )
+                except Exception as exc:
+                    logger.warning("Garmin activity sync failed: %s", exc)
         await asyncio.sleep(interval_hours * 3600)

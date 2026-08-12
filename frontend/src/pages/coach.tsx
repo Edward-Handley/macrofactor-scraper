@@ -7,14 +7,20 @@ import { saveCoachEntry, listCoachHistory, type CoachHistoryEntry } from "../lib
 import { formatDdMmYyyy } from "../lib/format";
 import { ChatThread } from "../components/coach/chat-thread";
 import type { CoachConversation } from "../lib/types";
+import { useAppMode } from "../hooks/use-app-mode";
 
 type CoachMode = "prompt" | "chat";
 
-const FRAMING_OPTIONS = [
+const CUT_FRAMING_OPTIONS = [
   { kind: "check_in",    label: "Daily check-in",    color: "violet" },
   { kind: "weekly",      label: "Weekly review",      color: "blue"   },
   { kind: "plateau",     label: "Plateau debug",      color: "amber"  },
   { kind: "cut_reassess",label: "Cut reassess",       color: "emerald"},
+] as const;
+
+const PERF_FRAMING_OPTIONS = [
+  { kind: "performance_day",  label: "Training check-in", color: "cyan"  },
+  { kind: "performance_week", label: "Weekly review",     color: "violet"},
 ] as const;
 
 const FRAMING_COLORS: Record<string, { active: string; base: string }> = {
@@ -22,6 +28,7 @@ const FRAMING_COLORS: Record<string, { active: string; base: string }> = {
   blue:    { active: "bg-blue-600 border-blue-600 text-white",     base: "border-zinc-700 text-zinc-500 hover:text-zinc-300" },
   amber:   { active: "bg-amber-600 border-amber-600 text-white",   base: "border-zinc-700 text-zinc-500 hover:text-zinc-300" },
   emerald: { active: "bg-emerald-600 border-emerald-600 text-white", base: "border-zinc-700 text-zinc-500 hover:text-zinc-300" },
+  cyan:    { active: "bg-cyan-600 border-cyan-600 text-white",     base: "border-zinc-700 text-zinc-500 hover:text-zinc-300" },
 };
 
 // ─── Prompt Builder mode ─────────────────────────────────────────────────────
@@ -79,7 +86,8 @@ function PromptBuilder({ forDate, kind, setKind }: { forDate: string; kind: stri
   const [text, setText] = useState("");
   const [copied, setCopied] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
-  const kindLabel = FRAMING_OPTIONS.find(f => f.kind === kind)?.label ?? "Check-in";
+  const allFramings = [...CUT_FRAMING_OPTIONS, ...PERF_FRAMING_OPTIONS];
+  const kindLabel = allFramings.find(f => f.kind === kind)?.label ?? "Check-in";
 
   useEffect(() => {
     if (data?.prompt_text) {
@@ -122,7 +130,7 @@ function PromptBuilder({ forDate, kind, setKind }: { forDate: string; kind: stri
       </div>
 
       <div className="flex flex-wrap gap-2">
-        {FRAMING_OPTIONS.map((f) => {
+        {allFramings.map((f) => {
           const active = kind === f.kind;
           const colors = FRAMING_COLORS[f.color];
           return (
@@ -304,10 +312,17 @@ function ChatMode({ forDate, kind }: { forDate: string; kind: string }) {
 
 export function Coach() {
   const { date: forDate } = useActiveDate();
-  const [kind, setKind] = useState<string>("check_in");
+  const { mode: appMode } = useAppMode();
+  const framingOptions = appMode === "performance" ? PERF_FRAMING_OPTIONS : CUT_FRAMING_OPTIONS;
+  const defaultKind = framingOptions[0].kind;
+  const [kind, setKind] = useState<string>(defaultKind);
   const [mode, setMode] = useState<CoachMode>(() => {
     return (localStorage.getItem("coach-mode") as CoachMode) ?? "prompt";
   });
+
+  useEffect(() => {
+    setKind(framingOptions[0].kind);
+  }, [appMode]);
 
   const setModeAndSave = (m: CoachMode) => {
     setMode(m);
@@ -344,7 +359,7 @@ export function Coach() {
 
       {/* Framing chips (shared between modes) */}
       <div className="flex flex-wrap gap-2">
-        {FRAMING_OPTIONS.map((f) => {
+        {framingOptions.map((f) => {
           const active = kind === f.kind;
           const colors = FRAMING_COLORS[f.color];
           return (

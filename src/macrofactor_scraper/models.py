@@ -837,3 +837,241 @@ class BodyCompositionPoint(BaseModel):
 class BodyCompositionResponse(BaseModel):
     count: int
     points: list[BodyCompositionPoint]
+
+
+# ─── Activities ───────────────────────────────────────────────────────────────
+
+class Activity(BaseModel):
+    id: int
+    source: str
+    garmin_activity_id: int | None = None
+    sport: str
+    activity_date: dt.date
+    start_time: str | None = None
+    duration_seconds: float | None = None
+    distance_m: float | None = None
+    calories: float | None = None
+    avg_hr: float | None = None
+    max_hr: float | None = None
+    aerobic_te: float | None = None
+    anaerobic_te: float | None = None
+    training_load: float | None = None
+    load_source: str | None = None
+    rpe: float | None = None
+    perceived_intensity: str | None = None
+    pool_length_m: float | None = None
+    laps: int | None = None
+    total_strokes: int | None = None
+    avg_swolf: float | None = None
+    avg_pace_s_per_100m: float | None = None
+    stroke_type: str | None = None
+    hr_zones: list[dict] | None = None
+    laps_data: list[dict] | None = None
+    notes: str | None = None
+    created_at: dt.datetime | None = None
+    updated_at: dt.datetime | None = None
+
+
+class ActivityCreate(BaseModel):
+    sport: str
+    activity_date: dt.date
+    start_time: str | None = None
+    duration_minutes: float
+    distance_m: float | None = None
+    calories: float | None = None
+    rpe: float | None = None
+    perceived_intensity: str | None = None
+    notes: str | None = None
+
+
+class ActivityUpdate(BaseModel):
+    sport: str | None = None
+    activity_date: dt.date | None = None
+    start_time: str | None = None
+    duration_minutes: float | None = None
+    distance_m: float | None = None
+    calories: float | None = None
+    rpe: float | None = None
+    perceived_intensity: str | None = None
+    notes: str | None = None
+
+
+class ActivityListResponse(BaseModel):
+    count: int
+    activities: list[Activity]
+
+
+# ─── Training load / ACWR ─────────────────────────────────────────────────────
+
+class TrainingLoadPoint(BaseModel):
+    date: str
+    load: float
+    atl: float
+    ctl: float
+    acwr: float | None = None
+    sources: list[str] = Field(default_factory=list)
+
+
+class TrainingLoadResponse(BaseModel):
+    series: list[TrainingLoadPoint]
+    current_acwr: float | None = None
+    status: str = "unknown"
+
+
+# ─── Swim analytics ───────────────────────────────────────────────────────────
+
+class SwimWeeklyVolume(BaseModel):
+    week: str
+    volume_m: float
+    sessions: int
+
+
+class SwimPacePoint(BaseModel):
+    date: str
+    pace_s_per_100m: float
+
+
+class SwimSwolfPoint(BaseModel):
+    date: str
+    swolf: float
+
+
+class SwimStrokeMix(BaseModel):
+    stroke: str
+    count: int
+
+
+class SwimAnalyticsResponse(BaseModel):
+    weekly_volume: list[SwimWeeklyVolume]
+    pace_series: list[SwimPacePoint]
+    swolf_series: list[SwimSwolfPoint]
+    stroke_mix: list[SwimStrokeMix]
+    best_pace_s_per_100m: float | None = None
+    total_sessions: int
+    total_volume_m: float
+
+
+# ─── Performance goals ────────────────────────────────────────────────────────
+
+class PerformanceGoal(BaseModel):
+    id: int
+    name: str
+    goal_type: str
+    sport: str | None = None
+    target_value: float | None = None
+    unit: str | None = None
+    target_date: dt.date | None = None
+    active: bool = True
+    notes: str | None = None
+    created_at: dt.datetime | None = None
+
+
+class PerformanceGoalCreate(BaseModel):
+    name: str
+    goal_type: str
+    sport: str | None = None
+    target_value: float | None = None
+    unit: str | None = None
+    target_date: dt.date | None = None
+    notes: str | None = None
+
+
+class PerformanceGoalUpdate(BaseModel):
+    name: str | None = None
+    goal_type: str | None = None
+    sport: str | None = None
+    target_value: float | None = None
+    unit: str | None = None
+    target_date: dt.date | None = None
+    active: bool | None = None
+    notes: str | None = None
+
+
+class PerformanceGoalListResponse(BaseModel):
+    count: int
+    goals: list[PerformanceGoal]
+
+
+# ─── Daily training recommendation ───────────────────────────────────────────
+
+class DailyRecommendationResponse(BaseModel):
+    date: str
+    recommendation: str
+    model: str
+    tokens_used: int
+    created_at: str | None = None
+
+
+# ─── Performance weekly review ────────────────────────────────────────────────
+
+class PerformanceReviewResponse(BaseModel):
+    week_start_date: str
+    narrative: str
+    highlights: list[str]
+    model: str
+    tokens_used: int
+    created_at: str | None = None
+
+
+class PerformanceReviewListResponse(BaseModel):
+    count: int
+    reviews: list[PerformanceReviewResponse]
+
+
+# ─── Fueling summary ─────────────────────────────────────────────────────────
+
+class FuelingSummaryResponse(BaseModel):
+    date: str
+    calories: float | None = None
+    protein: float | None = None
+    training_load: float
+
+
+# ─── Activity converters ──────────────────────────────────────────────────────
+
+def _row_to_activity(row: dict) -> "Activity":
+    return Activity(
+        id=row["id"],
+        source=row["source"],
+        garmin_activity_id=row.get("garmin_activity_id"),
+        sport=row["sport"],
+        activity_date=row["activity_date"],
+        start_time=row.get("start_time"),
+        duration_seconds=row.get("duration_seconds"),
+        distance_m=row.get("distance_m"),
+        calories=row.get("calories"),
+        avg_hr=row.get("avg_hr"),
+        max_hr=row.get("max_hr"),
+        aerobic_te=row.get("aerobic_te"),
+        anaerobic_te=row.get("anaerobic_te"),
+        training_load=row.get("training_load"),
+        load_source=row.get("load_source"),
+        rpe=row.get("rpe"),
+        perceived_intensity=row.get("perceived_intensity"),
+        pool_length_m=row.get("pool_length_m"),
+        laps=row.get("laps"),
+        total_strokes=row.get("total_strokes"),
+        avg_swolf=row.get("avg_swolf"),
+        avg_pace_s_per_100m=row.get("avg_pace_s_per_100m"),
+        stroke_type=row.get("stroke_type"),
+        hr_zones=row.get("hr_zones"),
+        laps_data=row.get("laps"),
+        notes=row.get("notes"),
+        created_at=row.get("created_at"),
+        updated_at=row.get("updated_at"),
+    )
+
+
+def _row_to_goal(row: dict) -> "PerformanceGoal":
+    return PerformanceGoal(
+        id=row["id"],
+        name=row["name"],
+        goal_type=row["goal_type"],
+        sport=row.get("sport"),
+        target_value=row.get("target_value"),
+        unit=row.get("unit"),
+        target_date=row.get("target_date"),
+        active=bool(row.get("active", 1)),
+        notes=row.get("notes"),
+        created_at=row.get("created_at"),
+    )

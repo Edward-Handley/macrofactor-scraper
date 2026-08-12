@@ -1,6 +1,6 @@
 import { Outlet } from "react-router-dom";
 import { LogOut, Search, Zap } from "lucide-react";
-import { SidebarNav, BottomNav } from "./nav";
+import { SidebarNav, BottomNav, ModeToggle } from "./nav";
 import { ThemeToggle } from "./theme-toggle";
 import { DateScope } from "./date-scope";
 import { PaletteProvider } from "../command-palette/context";
@@ -9,6 +9,7 @@ import { InstallPrompt } from "./install-prompt";
 import { useIngestStatus } from "../../hooks/use-dashboard";
 import { useCutPhases } from "../../hooks/use-daily-log";
 import { formatShortDate, isoDate } from "../../lib/format";
+import { AppModeProvider } from "../../hooks/use-app-mode";
 
 function ActivePhaseBadge() {
   const { data } = useCutPhases();
@@ -40,6 +41,7 @@ function Topbar() {
         <ActivePhaseBadge />
       </div>
       <div className="flex items-center gap-2">
+        <ModeToggle />
         <DateScope />
         {lastSync && (
           <span className="text-xs text-zinc-500 hidden sm:block">synced {lastSync}</span>
@@ -61,6 +63,7 @@ function Topbar() {
 
 export function AppShell() {
   return (
+    <AppModeProvider>
     <PaletteProvider>
     <CommandPalette />
     <InstallPrompt />
@@ -75,6 +78,7 @@ export function AppShell() {
           </div>
           <ActivePhaseBadge />
           <DateScope />
+          <ModeToggle />
         </div>
         <SidebarNav />
         <div className="mt-auto p-3 border-t border-zinc-800 flex flex-col gap-2">
@@ -119,5 +123,6 @@ export function AppShell() {
       </div>
     </div>
     </PaletteProvider>
+    </AppModeProvider>
   );
 }

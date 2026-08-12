@@ -23,6 +23,10 @@ from fastapi.staticfiles import StaticFiles
 from macrofactor_scraper.config import Settings, get_settings
 from macrofactor_scraper.health_export import HealthAutoExportService
 from macrofactor_scraper.models import (
+    Activity,
+    ActivityCreate,
+    ActivityListResponse,
+    ActivityUpdate,
     BodyCompositionResponse,
     BodyMeasurement,
     BodyMeasurementListResponse,
@@ -39,16 +43,24 @@ from macrofactor_scraper.models import (
     DailyLog,
     DailyLogListResponse,
     DailyLogUpsert,
+    DailyRecommendationResponse,
     DailySummaryResponse,
     DashboardMetricCatalogResponse,
     DashboardPreferences,
     DashboardSummaryResponse,
+    FuelingSummaryResponse,
     HealthResponse,
     IngestStatusResponse,
     IngestResponse,
     MetricDateDiagnosticResponse,
     MetricListResponse,
     MetricRecordsResponse,
+    PerformanceGoal,
+    PerformanceGoalCreate,
+    PerformanceGoalListResponse,
+    PerformanceGoalUpdate,
+    PerformanceReviewListResponse,
+    PerformanceReviewResponse,
     ReadinessReport,
     RepairReport,
     SmartInsightsResponse,
@@ -58,14 +70,23 @@ from macrofactor_scraper.models import (
     StrongImportResponse,
     StrongSessionListResponse,
     StrongSessionRecord,
+    SwimAnalyticsResponse,
+    SwimPacePoint,
+    SwimStrokeMix,
+    SwimSwolfPoint,
+    SwimWeeklyVolume,
+    TrainingLoadPoint,
+    TrainingLoadResponse,
     AiAnalyseRequest,
     AiAnalyseResponse,
     PhotoListResponse,
     PhotoDateEntry,
     StrongSummaryResponse,
     WorkoutListResponse,
+    _row_to_activity,
     _row_to_cut_phase,
     _row_to_daily_log,
+    _row_to_goal,
     _row_to_measurement,
 )
 
@@ -1087,15 +1108,18 @@ async def coach_chat_message(
 
     # If this is the first user message, prepend the snapshot context
     if not existing_msgs:
-        from macrofactor_scraper.ai import _build_snapshot, build_chat_system_message
+        from macrofactor_scraper.ai import _build_snapshot, _build_performance_snapshot, build_chat_system_message
         import datetime as _dt
         for_date_str = conv.get("for_date") or _dt.date.today().isoformat()
         try:
             for_date = date.fromisoformat(for_date_str)
         except ValueError:
             for_date = date.today()
-        snapshot = await asyncio.to_thread(_build_snapshot, service, for_date)
         framing = conv.get("framing") or "free"
+        if framing.startswith("performance"):
+            snapshot = await asyncio.to_thread(_build_performance_snapshot, service, for_date)
+        else:
+            snapshot = await asyncio.to_thread(_build_snapshot, service, for_date)
         context_block = build_chat_system_message(snapshot, framing)
         api_messages.append({"role": "user", "content": context_block})
         api_messages.append({"role": "assistant", "content": "Understood. I have reviewed your health data. What would you like to know?"})
@@ -1477,6 +1501,306 @@ async def weekly_recap_regenerate(
         ),
     )
     return result
+
+
+# ─── Activities ───────────────────────────────────────────────────────────────
+
+@app.get("/v1/activities", response_model=ActivityListResponse, dependencies=[Depends(require_private_access)])
+async def list_activities(
+    start: date | None = None,
+    end: date | None = None,
+    sport: str | None = None,
+    service: HealthAutoExportService = Depends(get_health_export_service),
+) -> ActivityListResponse:
+    import datetime as _dt
+    end_d = end or _dt.date.today()
+    start_d = start or (end_d - _dt.timedelta(days=90))
+    rows = await asyncio.get_event_loop().run_in_executor(
+        None, lambda: service.list_activities(start_d.isoformat(), end_d.isoformat(), sport)
+    )
+    return ActivityListResponse(count=len(rows), activities=[_row_to_activity(r) for r in rows])
+
+
+@app.get("/v1/activities/{activity_id}", response_model=Activity, dependencies=[Depends(require_private_access)])
+async def get_activity(
+    activity_id: int,
+    service: HealthAutoExportService = Depends(get_health_export_service),
+) -> Activity:
+    row = await asyncio.get_event_loop().run_in_executor(None, service.get_activity, activity_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="Activity not found")
+    return _row_to_activity(row)
+
+
+@app.post("/v1/activities", response_model=Activity, status_code=201, dependencies=[Depends(require_private_access)])
+async def create_activity(
+    body: ActivityCreate,
+    service: HealthAutoExportService = Depends(get_health_export_service),
+) -> Activity:
+    payload = body.model_dump()
+    payload["activity_date"] = payload["activity_date"].isoformat()
+    row = await asyncio.get_event_loop().run_in_executor(None, service.create_manual_activity, payload)
+    return _row_to_activity(row)
+
+
+@app.put("/v1/activities/{activity_id}", response_model=Activity, dependencies=[Depends(require_private_access)])
+async def update_activity(
+    activity_id: int,
+    body: ActivityUpdate,
+    service: HealthAutoExportService = Depends(get_health_export_service),
+) -> Activity:
+    payload = body.model_dump(exclude_unset=True)
+    if "activity_date" in payload and payload["activity_date"] is not None:
+        payload["activity_date"] = payload["activity_date"].isoformat()
+    row = await asyncio.get_event_loop().run_in_executor(
+        None, lambda: service.update_manual_activity(activity_id, payload)
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail="Activity not found or is a Garmin activity")
+    return _row_to_activity(row)
+
+
+@app.delete("/v1/activities/{activity_id}", dependencies=[Depends(require_private_access)])
+async def delete_activity(
+    activity_id: int,
+    force: bool = False,
+    service: HealthAutoExportService = Depends(get_health_export_service),
+) -> dict:
+    try:
+        deleted = await asyncio.get_event_loop().run_in_executor(
+            None, lambda: service.delete_activity(activity_id, force)
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Activity not found")
+    return {"deleted": True}
+
+
+@app.post("/v1/activities/backfill", dependencies=[Depends(require_private_access)])
+async def backfill_activities(
+    days: int = 30,
+    details: bool = True,
+    service: HealthAutoExportService = Depends(get_health_export_service),
+) -> dict:
+    garmin = getattr(app.state, "garmin_service", None)
+    if garmin is None:
+        raise HTTPException(status_code=503, detail="Garmin not configured")
+    if not 1 <= days <= 365:
+        raise HTTPException(status_code=400, detail="days must be 1-365")
+    from macrofactor_scraper.garmin import _SYNC_LOCK
+    async with _SYNC_LOCK:
+        result = await asyncio.get_event_loop().run_in_executor(
+            None, lambda: garmin.sync_activities(service, days_back=days, fetch_details=details)
+        )
+    return result
+
+
+@app.post("/v1/garmin/sync-activities", dependencies=[Depends(require_private_access)])
+async def garmin_sync_activities(
+    days_back: int = 2,
+    service: HealthAutoExportService = Depends(get_health_export_service),
+) -> dict:
+    garmin = getattr(app.state, "garmin_service", None)
+    if garmin is None:
+        raise HTTPException(status_code=503, detail="Garmin not configured")
+    from macrofactor_scraper.garmin import _SYNC_LOCK
+    async with _SYNC_LOCK:
+        result = await asyncio.get_event_loop().run_in_executor(
+            None, lambda: garmin.sync_activities(service, days_back=days_back)
+        )
+    return result
+
+
+# ─── Performance analytics ────────────────────────────────────────────────────
+
+@app.get("/v1/performance/load", response_model=TrainingLoadResponse, dependencies=[Depends(require_private_access)])
+async def performance_load(
+    start: date | None = None,
+    end: date | None = None,
+    service: HealthAutoExportService = Depends(get_health_export_service),
+) -> TrainingLoadResponse:
+    import datetime as _dt
+    end_d = end or _dt.date.today()
+    start_d = start or (end_d - _dt.timedelta(days=90))
+    from macrofactor_scraper.performance import daily_load_series, compute_acwr
+    series = await asyncio.get_event_loop().run_in_executor(
+        None, lambda: daily_load_series(service, start_d, end_d)
+    )
+    result = compute_acwr(series)
+    return TrainingLoadResponse(
+        series=[TrainingLoadPoint(**p) for p in result["series"]],
+        current_acwr=result["current_acwr"],
+        status=result["status"],
+    )
+
+
+@app.get("/v1/performance/swim", response_model=SwimAnalyticsResponse, dependencies=[Depends(require_private_access)])
+async def performance_swim(
+    start: date | None = None,
+    end: date | None = None,
+    service: HealthAutoExportService = Depends(get_health_export_service),
+) -> SwimAnalyticsResponse:
+    import datetime as _dt
+    end_d = end or _dt.date.today()
+    start_d = start or (end_d - _dt.timedelta(days=90))
+    from macrofactor_scraper.performance import swim_analytics
+    data = await asyncio.get_event_loop().run_in_executor(
+        None, lambda: swim_analytics(service, start_d, end_d)
+    )
+    return SwimAnalyticsResponse(
+        weekly_volume=[SwimWeeklyVolume(**v) for v in data["weekly_volume"]],
+        pace_series=[SwimPacePoint(**p) for p in data["pace_series"]],
+        swolf_series=[SwimSwolfPoint(**p) for p in data["swolf_series"]],
+        stroke_mix=[SwimStrokeMix(**s) for s in data["stroke_mix"]],
+        best_pace_s_per_100m=data["best_pace_s_per_100m"],
+        total_sessions=data["total_sessions"],
+        total_volume_m=data["total_volume_m"],
+    )
+
+
+@app.get("/v1/performance/fueling", response_model=FuelingSummaryResponse, dependencies=[Depends(require_private_access)])
+async def performance_fueling(
+    for_date: date | None = None,
+    service: HealthAutoExportService = Depends(get_health_export_service),
+) -> FuelingSummaryResponse:
+    import datetime as _dt
+    d = for_date or _dt.date.today()
+    from macrofactor_scraper.performance import fueling_summary
+    data = await asyncio.get_event_loop().run_in_executor(None, lambda: fueling_summary(service, d))
+    return FuelingSummaryResponse(**data)
+
+
+# ─── Performance goals ────────────────────────────────────────────────────────
+
+@app.get("/v1/goals", response_model=PerformanceGoalListResponse, dependencies=[Depends(require_private_access)])
+async def list_goals(
+    active_only: bool = True,
+    service: HealthAutoExportService = Depends(get_health_export_service),
+) -> PerformanceGoalListResponse:
+    rows = await asyncio.get_event_loop().run_in_executor(
+        None, lambda: service.list_goals(active_only)
+    )
+    return PerformanceGoalListResponse(count=len(rows), goals=[_row_to_goal(r) for r in rows])
+
+
+@app.post("/v1/goals", response_model=PerformanceGoal, status_code=201, dependencies=[Depends(require_private_access)])
+async def create_goal(
+    body: PerformanceGoalCreate,
+    service: HealthAutoExportService = Depends(get_health_export_service),
+) -> PerformanceGoal:
+    payload = body.model_dump()
+    if payload.get("target_date"):
+        payload["target_date"] = payload["target_date"].isoformat()
+    row = await asyncio.get_event_loop().run_in_executor(None, lambda: service.create_goal(payload))
+    return _row_to_goal(row)
+
+
+@app.put("/v1/goals/{goal_id}", response_model=PerformanceGoal, dependencies=[Depends(require_private_access)])
+async def update_goal(
+    goal_id: int,
+    body: PerformanceGoalUpdate,
+    service: HealthAutoExportService = Depends(get_health_export_service),
+) -> PerformanceGoal:
+    payload = body.model_dump(exclude_unset=True)
+    if "target_date" in payload and payload["target_date"] is not None:
+        payload["target_date"] = payload["target_date"].isoformat()
+    if "active" in payload and payload["active"] is not None:
+        payload["active"] = int(payload["active"])
+    row = await asyncio.get_event_loop().run_in_executor(
+        None, lambda: service.update_goal(goal_id, payload)
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail="Goal not found")
+    return _row_to_goal(row)
+
+
+@app.delete("/v1/goals/{goal_id}", dependencies=[Depends(require_private_access)])
+async def delete_goal(
+    goal_id: int,
+    service: HealthAutoExportService = Depends(get_health_export_service),
+) -> dict:
+    deleted = await asyncio.get_event_loop().run_in_executor(None, lambda: service.delete_goal(goal_id))
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Goal not found")
+    return {"deleted": True}
+
+
+# ─── Performance AI ───────────────────────────────────────────────────────────
+
+@app.get("/v1/performance/daily-recommendation", response_model=DailyRecommendationResponse, dependencies=[Depends(require_private_access)])
+async def performance_daily_recommendation(
+    for_date: date | None = None,
+    service: HealthAutoExportService = Depends(get_health_export_service),
+    settings: Settings = Depends(get_settings),
+) -> DailyRecommendationResponse:
+    import datetime as _dt
+    d = for_date or _dt.date.today()
+    date_str = d.isoformat()
+    existing = await asyncio.get_event_loop().run_in_executor(
+        None, lambda: service.get_training_recommendation(date_str)
+    )
+    if existing:
+        return DailyRecommendationResponse(**existing)
+    if not settings.anthropic_api_key:
+        raise HTTPException(status_code=503, detail="AI not configured — set ANTHROPIC_API_KEY")
+    from macrofactor_scraper.ai import generate_daily_recommendation
+    result = await generate_daily_recommendation(service, d, settings.anthropic_api_key)
+    await asyncio.get_event_loop().run_in_executor(
+        None,
+        lambda: service.upsert_training_recommendation(
+            date_str, result["recommendation"], result["model"], result["tokens_used"]
+        ),
+    )
+    return DailyRecommendationResponse(
+        date=date_str,
+        recommendation=result["recommendation"],
+        model=result["model"],
+        tokens_used=result["tokens_used"],
+    )
+
+
+@app.get("/v1/performance/reviews", response_model=PerformanceReviewListResponse, dependencies=[Depends(require_private_access)])
+async def list_performance_reviews(
+    service: HealthAutoExportService = Depends(get_health_export_service),
+) -> PerformanceReviewListResponse:
+    rows = await asyncio.get_event_loop().run_in_executor(None, service.list_performance_reviews)
+    return PerformanceReviewListResponse(
+        count=len(rows),
+        reviews=[PerformanceReviewResponse(**r) for r in rows],
+    )
+
+
+@app.post("/v1/performance/reviews/generate", response_model=PerformanceReviewResponse, dependencies=[Depends(require_private_access)])
+async def generate_performance_review_endpoint(
+    week_start: str | None = None,
+    service: HealthAutoExportService = Depends(get_health_export_service),
+    settings: Settings = Depends(get_settings),
+) -> PerformanceReviewResponse:
+    import datetime as _dt
+    if not settings.anthropic_api_key:
+        raise HTTPException(status_code=503, detail="AI not configured — set ANTHROPIC_API_KEY")
+    if week_start:
+        try:
+            week_date = date.fromisoformat(week_start)
+        except ValueError:
+            raise HTTPException(status_code=422, detail="Invalid week_start date")
+    else:
+        today = _dt.date.today()
+        week_date = today - _dt.timedelta(days=today.weekday() + 1)  # last Monday
+    from macrofactor_scraper.ai import generate_performance_review
+    result = await generate_performance_review(service, week_date, settings.anthropic_api_key)
+    await asyncio.get_event_loop().run_in_executor(
+        None,
+        lambda: service.upsert_performance_review(
+            result["week_start_date"],
+            result["narrative"],
+            result["highlights"],
+            result["model"],
+            result["tokens_used"],
+        ),
+    )
+    return PerformanceReviewResponse(**result)
 
 
 @app.get("/{full_path:path}")

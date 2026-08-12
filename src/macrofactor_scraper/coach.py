@@ -89,6 +89,16 @@ _FRAMING_SUFFIXES: dict[str, str] = {
         "Evaluate: rate of loss vs target, muscle retention signals (protein, training quality), "
         "recovery quality. Recommend: continue as-is, adjust calories/macros, or extend/end phase."
     ),
+    "performance_day": (
+        "Based on the readiness data and recent training load above, recommend today's session. "
+        "Specify: train or rest, intensity level, suggested session type, and key reason. "
+        "If swim is recommended, suggest a specific set or distance target."
+    ),
+    "performance_week": (
+        "Please provide a weekly training review: load progression this week vs recent baseline, "
+        "swim volume and pace trend, recovery quality. Set 2-3 specific targets for next week "
+        "with concrete numbers (e.g. target swim distance, ACWR range, pace goal)."
+    ),
 }
 
 
