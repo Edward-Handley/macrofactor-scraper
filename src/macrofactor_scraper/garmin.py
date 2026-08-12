@@ -777,14 +777,14 @@ class GarminSyncService:
                     try:
                         time.sleep(0.5)
                         splits_data = self._client.get_activity_splits(int(garmin_id))
-                        summary["laps"] = _extract_swim_laps(splits_data)
+                        summary["lap_details"] = _extract_swim_laps(splits_data)
                         counts["detail_calls"] += 1
                     except Exception as exc:
                         logger.debug("Garmin swim splits fetch failed for activity %s: %s", garmin_id, exc)
-                        summary["laps"] = None
+                        summary["lap_details"] = None
             else:
                 summary.setdefault("hr_zones", None)
-                summary.setdefault("laps", None)
+                summary.setdefault("lap_details", None)
 
             inserted = service.upsert_garmin_activity(summary)
             if inserted:

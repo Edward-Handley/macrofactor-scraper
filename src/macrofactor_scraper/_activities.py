@@ -10,16 +10,18 @@ from macrofactor_scraper._utils import _fingerprint
 
 def _row_to_activity(row: sqlite3.Row) -> dict:
     d = dict(row)
-    for field in ("hr_zones_json", "laps_json"):
-        if field in d and d[field]:
+    # laps_json holds swim lap DETAILS (a list) → expose as "laps_data" so it does
+    # not clobber the integer "laps" column (lap count).
+    for json_field, target in (("hr_zones_json", "hr_zones"), ("laps_json", "laps_data")):
+        if json_field in d and d[json_field]:
             try:
-                d[field.replace("_json", "")] = json.loads(d.pop(field))
+                d[target] = json.loads(d.pop(json_field))
             except Exception:
-                d[field.replace("_json", "")] = []
-                d.pop(field, None)
+                d[target] = None
+                d.pop(json_field, None)
         else:
-            d[field.replace("_json", "")] = None
-            d.pop(field, None)
+            d[target] = None
+            d.pop(json_field, None)
     return d
 
 
@@ -37,7 +39,7 @@ def upsert_garmin_activity(conn: sqlite3.Connection, payload: dict) -> bool:
     garmin_id = payload["garmin_activity_id"]
     fp = _fingerprint("garmin_activity_v1", str(garmin_id))
     hr_zones = json.dumps(payload.get("hr_zones")) if payload.get("hr_zones") is not None else None
-    laps = json.dumps(payload.get("laps")) if payload.get("laps") is not None else None
+    laps = json.dumps(payload.get("lap_details")) if payload.get("lap_details") is not None else None
     raw = json.dumps(payload.get("raw", {}))
 
     existing = conn.execute(

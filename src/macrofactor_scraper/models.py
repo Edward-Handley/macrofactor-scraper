@@ -1055,7 +1055,7 @@ def _row_to_activity(row: dict) -> "Activity":
         avg_pace_s_per_100m=row.get("avg_pace_s_per_100m"),
         stroke_type=row.get("stroke_type"),
         hr_zones=row.get("hr_zones"),
-        laps_data=row.get("laps"),
+        laps_data=row.get("laps_data"),
         notes=row.get("notes"),
         created_at=row.get("created_at"),
         updated_at=row.get("updated_at"),
