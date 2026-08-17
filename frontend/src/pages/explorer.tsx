@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useRef } from "react";
-import { Download, RefreshCw, ArrowUpDown, ArrowUp, ArrowDown, ChevronLeft, ChevronRight, Columns, Check, Trash2 } from "lucide-react";
+import { Download, RefreshCw, ArrowUpDown, ArrowUp, ArrowDown, ChevronLeft, ChevronRight, Columns, Check, Trash2, Pencil } from "lucide-react";
 import { fmt } from "../lib/format";
 import { api } from "../lib/api";
 
@@ -9,12 +9,17 @@ const DATASETS: { id: DatasetId; label: string; description: string; needsMetric
   { id: "dashboard_summary", label: "Dashboard Summary", description: "Daily summaries with preferences applied" },
   { id: "daily_summary", label: "Daily Summary (raw)", description: "All fields, no preference filtering" },
   { id: "metric_catalog", label: "Metric Catalog", description: "All metrics with source/coverage info" },
-  { id: "metric_records", label: "Metric Records", description: "Raw rows for a specific metric", needsMetric: true },
+  { id: "metric_records", label: "Metric Records", description: "Raw rows for a specific metric (editable inline)", needsMetric: true },
   { id: "workouts", label: "Workouts", description: "Workout sessions with duration/energy" },
   { id: "ingest_status", label: "Ingest Status", description: "Batch count, latest sync, date range" },
 ];
 
 const PAGE_SIZE = 50;
+
+// Metric names that feed the dashboard "weight" summary field.
+const WEIGHT_METRIC_NAMES = ["weight", "body_weight", "body_mass", "weight_body_mass"];
+
+interface MetricListItem { name: string; count: number; units: string | null; }
 
 function buildUrl(dataset: DatasetId, start: string, end: string, metric: string): string {
   const q = `start=${start}&end=${end}`;
@@ -22,7 +27,7 @@ function buildUrl(dataset: DatasetId, start: string, end: string, metric: string
     case "dashboard_summary": return `/v1/dashboard/summary?${q}&include_hidden=true`;
     case "daily_summary": return `/v1/daily-summary?${q}`;
     case "metric_catalog": return "/v1/dashboard/metric-catalog";
-    case "metric_records": return `/v1/metrics/${metric || "dietary_energy"}?${q}`;
+    case "metric_records": return `/v1/metrics/${encodeURIComponent(metric || "dietary_energy")}?${q}`;
     case "workouts": return `/v1/workouts?${q}`;
     case "ingest_status": return "/v1/ingest/status";
     default: return "/";
@@ -75,10 +80,34 @@ export function Explorer() {
   const colPickerRef = useRef<HTMLDivElement>(null);
   const [editValues, setEditValues] = useState<Record<number, { quantity: string; units: string }>>({});
   const [savingId, setSavingId] = useState<number | null>(null);
+  const [metricOptions, setMetricOptions] = useState<MetricListItem[]>([]);
 
   const url = buildUrl(dataset, start, end, metric);
   const needsMetric = DATASETS.find((d) => d.id === dataset)?.needsMetric;
   const editable = dataset === "metric_records";
+
+  // Load available metric names once so Metric Records can offer a dropdown
+  // (and weight records are easy to find/edit).
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/v1/metrics")
+      .then((res) => (res.ok ? res.json() : Promise.reject(new Error(String(res.status)))))
+      .then((data: { metrics?: MetricListItem[] }) => {
+        if (!cancelled) setMetricOptions(data.metrics ?? []);
+      })
+      .catch(() => { /* dropdown just stays a text input */ });
+    return () => { cancelled = true; };
+  }, []);
+
+  // Dedupe metric names (metrics can repeat per units).
+  const metricNames = useMemo(() => {
+    const seen = new Map<string, number>();
+    for (const m of metricOptions) seen.set(m.name, (seen.get(m.name) ?? 0) + m.count);
+    return [...seen.entries()].map(([name, count]) => ({ name, count }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }, [metricOptions]);
+
+  const weightMetricName = WEIGHT_METRIC_NAMES.find((n) => metricNames.some((m) => m.name === n)) ?? null;
   const allRows = extractRows(result);
   const allKeys = allRows.length > 0 && typeof allRows[0] === "object"
     ? Object.keys(allRows[0] as object) : [];
@@ -271,12 +300,29 @@ export function Explorer() {
           {needsMetric && (
             <div className="flex flex-col gap-1">
               <label className="text-xs text-zinc-500 font-semibold uppercase tracking-wide">Metric</label>
-              <input
-                value={metric}
-                onChange={(e) => setMetric(e.target.value)}
-                placeholder="dietary_energy"
-                className="bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-zinc-200 w-44"
-              />
+              {metricNames.length > 0 ? (
+                <select
+                  value={metric}
+                  onChange={(e) => setMetric(e.target.value)}
+                  className="bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-zinc-200 w-52"
+                >
+                  {!metricNames.some((m) => m.name === metric) && (
+                    <option value={metric}>{metric || "(pick a metric)"}</option>
+                  )}
+                  {metricNames.map((m) => (
+                    <option key={m.name} value={m.name}>
+                      {m.name} ({m.count})
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <input
+                  value={metric}
+                  onChange={(e) => setMetric(e.target.value)}
+                  placeholder="dietary_energy"
+                  className="bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-zinc-200 w-44"
+                />
+              )}
             </div>
           )}
           <div className="flex flex-col gap-1">
@@ -298,6 +344,21 @@ export function Explorer() {
             Reload
           </button>
         </div>
+        {weightMetricName && dataset !== "metric_records" && (
+          <button
+            onClick={() => { setDataset("metric_records"); setMetric(weightMetricName); }}
+            className="mt-3 flex items-center gap-1.5 px-3 py-1.5 bg-zinc-800 border border-zinc-700 hover:border-emerald-500/50 hover:text-emerald-400 text-zinc-300 rounded-lg text-xs font-semibold transition-colors"
+          >
+            <Pencil size={12} />
+            Edit weight entries ({weightMetricName})
+          </button>
+        )}
+        {editable && (
+          <p className="text-xs text-zinc-500 mt-3">
+            Tip: rows in this view can be edited inline — change <span className="font-mono text-zinc-400">quantity</span> or{" "}
+            <span className="font-mono text-zinc-400">units</span>, then hit Save. Use Delete to remove a record.
+          </p>
+        )}
         <p className="text-[10px] text-zinc-600 mt-2 font-mono break-all">{url}</p>
       </Card>
 

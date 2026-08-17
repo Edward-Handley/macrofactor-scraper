@@ -46,6 +46,34 @@ def _payload() -> dict:
     }
 
 
+def _weight_payload(metric_name: str = "weight") -> dict:
+    return {
+        "data": {
+            "metrics": [
+                {
+                    "name": metric_name,
+                    "units": "kg",
+                    "data": [
+                        {"qty": 95.2, "date": "2026-07-18", "source": "MacroFactor"},
+                        {"qty": 94.8, "date": "2026-07-19", "source": "MacroFactor"},
+                    ],
+                },
+            ],
+            "workouts": [],
+        }
+    }
+
+
+def _ingest_weight_and_get_record_id(client: TestClient, metric_name: str = "weight") -> int:
+    response = client.post("/v1/ingest/health-auto-export", json=_weight_payload(metric_name), headers=_auth())
+    assert response.status_code == 200
+    records = client.get(f"/v1/metrics/{metric_name}", headers=_auth())
+    assert records.status_code == 200
+    items = records.json()["records"]
+    assert len(items) == 2
+    return items[0]["id"]
+
+
 def _ingest_and_get_record_id(client: TestClient) -> int:
     response = client.post("/v1/ingest/health-auto-export", json=_payload(), headers=_auth())
     assert response.status_code == 200
@@ -184,5 +212,90 @@ def test_delete_health_record_requires_auth(tmp_path: Path) -> None:
         record_id = _ingest_and_get_record_id(client)
         response = client.delete(f"/v1/health-records/{record_id}")
         assert response.status_code == 401
+    finally:
+        _clear_overrides()
+
+
+def test_update_weight_record(tmp_path: Path) -> None:
+    """Weight records (the metric Ed edits) round-trip through PATCH like any other."""
+    client = _client(tmp_path)
+    try:
+        record_id = _ingest_weight_and_get_record_id(client)
+
+        response = client.patch(
+            f"/v1/health-records/{record_id}",
+            json={"quantity": 94.1},
+            headers=_auth(),
+        )
+        assert response.status_code == 200
+        body = response.json()
+        assert body["id"] == record_id
+        assert body["metric_name"] == "weight"
+        assert body["quantity"] == 94.1
+        assert body["units"] == "kg"
+        assert body["date"] == "2026-07-18"
+
+        records = client.get("/v1/metrics/weight", headers=_auth()).json()["records"]
+        updated = next(r for r in records if r["id"] == record_id)
+        assert updated["quantity"] == 94.1
+    finally:
+        _clear_overrides()
+
+
+def test_update_weight_metric_name_variants(tmp_path: Path) -> None:
+    """All known weight metric name variants are editable by id."""
+    client = _client(tmp_path)
+    try:
+        for metric_name in ("weight", "body_weight", "body_mass", "weight_body_mass"):
+            record_id = _ingest_weight_and_get_record_id(client, metric_name)
+            response = client.patch(
+                f"/v1/health-records/{record_id}",
+                json={"quantity": 90.0},
+                headers=_auth(),
+            )
+            assert response.status_code == 200, metric_name
+            assert response.json()["quantity"] == 90.0
+    finally:
+        _clear_overrides()
+
+
+def test_delete_weight_record(tmp_path: Path) -> None:
+    client = _client(tmp_path)
+    try:
+        record_id = _ingest_weight_and_get_record_id(client)
+
+        response = client.delete(f"/v1/health-records/{record_id}", headers=_auth())
+        assert response.status_code == 200
+        assert response.json() == {"deleted": True}
+
+        records = client.get("/v1/metrics/weight", headers=_auth()).json()["records"]
+        assert all(r["id"] != record_id for r in records)
+        assert len(records) == 1
+    finally:
+        _clear_overrides()
+
+
+def test_update_health_record_empty_body_returns_record_unchanged(tmp_path: Path) -> None:
+    client = _client(tmp_path)
+    try:
+        record_id = _ingest_and_get_record_id(client)
+        response = client.patch(f"/v1/health-records/{record_id}", json={}, headers=_auth())
+        assert response.status_code == 200
+        body = response.json()
+        assert body["id"] == record_id
+        assert body["quantity"] == 2200
+    finally:
+        _clear_overrides()
+
+
+def test_metric_records_listed_in_metrics_index(tmp_path: Path) -> None:
+    """The /v1/metrics index (used by the Explorer dropdown) exposes weight metrics."""
+    client = _client(tmp_path)
+    try:
+        _ingest_weight_and_get_record_id(client)
+        response = client.get("/v1/metrics", headers=_auth())
+        assert response.status_code == 200
+        names = {m["name"] for m in response.json()["metrics"]}
+        assert "weight" in names
     finally:
         _clear_overrides()
