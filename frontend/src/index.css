@@ -34,6 +34,15 @@
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: oklch(0.3 0 0); border-radius: 3px; }
 
+/* Hide scrollbars on horizontal nav rails (mobile bottom nav) */
+.no-scrollbar {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
 /* Smooth transitions for theme switch */
 *, *::before, *::after {
   transition: background-color 0.15s ease, border-color 0.15s ease;

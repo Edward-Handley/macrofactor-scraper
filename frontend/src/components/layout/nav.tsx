@@ -24,7 +24,7 @@ function NavItem({
       end={end}
       className={({ isActive }) =>
         cn(
-          "flex flex-col items-center gap-1 px-3 py-2 rounded-xl text-xs font-medium transition-colors",
+          "flex flex-col items-center gap-1 px-3 py-2 rounded-xl text-xs font-medium transition-colors shrink-0",
           isActive
             ? "text-emerald-400 bg-emerald-500/10"
             : "text-zinc-500 hover:text-zinc-200 hover:bg-zinc-800"
@@ -51,7 +51,7 @@ function PerfNavItem({
       end={end}
       className={({ isActive }) =>
         cn(
-          "flex flex-col items-center gap-1 px-3 py-2 rounded-xl text-xs font-medium transition-colors",
+          "flex flex-col items-center gap-1 px-3 py-2 rounded-xl text-xs font-medium transition-colors shrink-0",
           isActive
             ? "text-cyan-400 bg-cyan-500/10"
             : "text-zinc-500 hover:text-zinc-200 hover:bg-zinc-800"
@@ -79,7 +79,7 @@ function LogNavItem() {
       to={to}
       className={({ isActive }) =>
         cn(
-          "flex flex-col items-center gap-1 px-3 py-2 rounded-xl text-xs font-medium transition-colors",
+          "flex flex-col items-center gap-1 px-3 py-2 rounded-xl text-xs font-medium transition-colors shrink-0",
           isActive ? activeColor : "text-zinc-500 hover:text-zinc-200 hover:bg-zinc-800"
         )
       }
@@ -171,7 +171,7 @@ export function BottomNav() {
 
   if (mode === "performance") {
     return (
-      <nav className="flex items-center justify-around px-2 py-1 border-t border-zinc-800 bg-zinc-950/95 backdrop-blur">
+      <nav className="flex items-center gap-1 px-2 pt-1 pb-[max(env(safe-area-inset-bottom),0.25rem)] border-t border-zinc-800 bg-zinc-950/95 backdrop-blur overflow-x-auto no-scrollbar">
         <PerfNavItem to="/performance" label="Dash" Icon={Gauge} end />
         <PerfNavItem to="/activities" label="Activities" Icon={Activity} />
         <PerfNavItem to="/swim" label="Swim" Icon={Waves} />
@@ -182,7 +182,7 @@ export function BottomNav() {
   }
 
   return (
-    <nav className="flex items-center justify-around px-2 py-1 border-t border-zinc-800 bg-zinc-950/95 backdrop-blur">
+    <nav className="flex items-center gap-1 px-2 pt-1 pb-[max(env(safe-area-inset-bottom),0.25rem)] border-t border-zinc-800 bg-zinc-950/95 backdrop-blur overflow-x-auto no-scrollbar">
       <NavItem to="/" label="Today" Icon={Activity} end />
       <LogNavItem />
       <NavItem to="/week" label="Week" Icon={CalendarCheck} />
