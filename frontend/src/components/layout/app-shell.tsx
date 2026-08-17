@@ -1,4 +1,5 @@
-import { Outlet } from "react-router-dom";
+import { useEffect, useRef } from "react";
+import { Outlet, useLocation } from "react-router-dom";
 import { LogOut, Search, Zap } from "lucide-react";
 import { SidebarNav, BottomNav, ModeToggle } from "./nav";
 import { ThemeToggle } from "./theme-toggle";
@@ -62,14 +63,21 @@ function Topbar() {
 }
 
 export function AppShell() {
+  const location = useLocation();
+  const mainRef = useRef<HTMLElement | null>(null);
+
+  useEffect(() => {
+    mainRef.current?.scrollTo({ top: 0, left: 0 });
+  }, [location.pathname]);
+
   return (
     <AppModeProvider>
     <PaletteProvider>
     <CommandPalette />
     <InstallPrompt />
     <div className="flex h-dvh flex-col md:flex-row overflow-hidden bg-zinc-950">
-      <aside className="hidden md:flex flex-col w-52 border-r border-zinc-800 shrink-0 bg-zinc-950">
-        <div className="flex flex-col gap-2 px-4 py-4 border-b border-zinc-800">
+      <aside className="hidden md:flex flex-col w-52 border-r border-zinc-800 shrink-0 bg-zinc-950 overflow-hidden">
+        <div className="flex flex-col gap-2 px-4 py-4 border-b border-zinc-800 shrink-0">
           <div className="flex items-center gap-2">
             <div className="w-7 h-7 bg-emerald-500 rounded-lg flex items-center justify-center">
               <Zap size={14} className="text-zinc-950" strokeWidth={2.5} />
@@ -80,8 +88,10 @@ export function AppShell() {
           <DateScope />
           <ModeToggle />
         </div>
-        <SidebarNav />
-        <div className="mt-auto p-3 border-t border-zinc-800 flex flex-col gap-2">
+        <div className="flex-1 overflow-y-auto">
+          <SidebarNav />
+        </div>
+        <div className="p-3 border-t border-zinc-800 flex flex-col gap-2 shrink-0">
           <button
             type="button"
             onClick={() => {
@@ -113,7 +123,7 @@ export function AppShell() {
           <Topbar />
         </div>
 
-        <main className="flex-1 overflow-y-auto">
+        <main ref={mainRef} className="flex-1 overflow-y-auto">
           <Outlet />
         </main>
 
