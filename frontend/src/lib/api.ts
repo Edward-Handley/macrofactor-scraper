@@ -22,6 +22,8 @@ import type {
   FuelingSummaryResponse,
   IngestStatus,
   MetricCatalogResponse,
+  MetricRecord,
+  MetricRecordUpdate,
   PerformanceGoal,
   PerformanceGoalCreate,
   PerformanceGoalListResponse,
@@ -78,6 +80,16 @@ export const api = {
   },
 
   metricCatalog: () => request<MetricCatalogResponse>("/v1/dashboard/metric-catalog"),
+
+  metricRecords: {
+    update: (id: number, fields: MetricRecordUpdate) =>
+      request<MetricRecord>(`/v1/health-records/${id}`, {
+        method: "PATCH",
+        body: JSON.stringify(fields),
+      }),
+    delete: (id: number) =>
+      request<{ deleted: boolean }>(`/v1/health-records/${id}`, { method: "DELETE" }),
+  },
 
   ingestStatus: () => request<IngestStatus>("/v1/ingest/status"),
 

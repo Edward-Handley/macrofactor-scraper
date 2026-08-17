@@ -49,11 +49,13 @@ from macrofactor_scraper.models import (
     DashboardPreferences,
     DashboardSummaryResponse,
     FuelingSummaryResponse,
+    HealthRecordUpdate,
     HealthResponse,
     IngestStatusResponse,
     IngestResponse,
     MetricDateDiagnosticResponse,
     MetricListResponse,
+    MetricRecord,
     MetricRecordsResponse,
     PerformanceGoal,
     PerformanceGoalCreate,
@@ -429,6 +431,31 @@ async def metric_records(
         return service.metric_records(metric_name, start, end)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.patch("/v1/health-records/{record_id}", response_model=MetricRecord, dependencies=[Depends(require_private_access)])
+async def update_health_record(
+    record_id: int,
+    body: HealthRecordUpdate,
+    service: HealthAutoExportService = Depends(get_health_export_service),
+) -> MetricRecord:
+    fields = body.model_dump(exclude_unset=True)
+    if "record_date" in fields and fields["record_date"] is not None:
+        fields["record_date"] = fields["record_date"].isoformat()
+    record = service.update_health_record(record_id, fields)
+    if record is None:
+        raise HTTPException(status_code=404, detail="Health record not found")
+    return record
+
+
+@app.delete("/v1/health-records/{record_id}", dependencies=[Depends(require_private_access)])
+async def delete_health_record(
+    record_id: int,
+    service: HealthAutoExportService = Depends(get_health_export_service),
+) -> dict:
+    if not service.delete_health_record(record_id):
+        raise HTTPException(status_code=404, detail="Health record not found")
+    return {"deleted": True}
 
 
 @app.get("/v1/daily-summary", response_model=DailySummaryResponse, dependencies=[Depends(require_private_access)])

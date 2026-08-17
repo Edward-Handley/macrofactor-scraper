@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo, useRef } from "react";
-import { Download, RefreshCw, ArrowUpDown, ArrowUp, ArrowDown, ChevronLeft, ChevronRight, Columns } from "lucide-react";
+import { Download, RefreshCw, ArrowUpDown, ArrowUp, ArrowDown, ChevronLeft, ChevronRight, Columns, Check, Trash2 } from "lucide-react";
 import { fmt } from "../lib/format";
+import { api } from "../lib/api";
 
 type DatasetId = "dashboard_summary" | "daily_summary" | "metric_catalog" | "metric_records" | "workouts" | "ingest_status";
 
@@ -72,9 +73,12 @@ export function Explorer() {
   const [hiddenCols, setHiddenCols] = useState<Set<string>>(new Set());
   const [showColPicker, setShowColPicker] = useState(false);
   const colPickerRef = useRef<HTMLDivElement>(null);
+  const [editValues, setEditValues] = useState<Record<number, { quantity: string; units: string }>>({});
+  const [savingId, setSavingId] = useState<number | null>(null);
 
   const url = buildUrl(dataset, start, end, metric);
   const needsMetric = DATASETS.find((d) => d.id === dataset)?.needsMetric;
+  const editable = dataset === "metric_records";
   const allRows = extractRows(result);
   const allKeys = allRows.length > 0 && typeof allRows[0] === "object"
     ? Object.keys(allRows[0] as object) : [];
@@ -139,6 +143,75 @@ export function Explorer() {
     a.href = URL.createObjectURL(blob);
     a.download = `${dataset}-${new Date().toISOString().slice(0, 10)}.csv`;
     a.click();
+  }
+
+  function rowId(row: unknown): number | null {
+    const id = (row as Record<string, unknown>).id;
+    return typeof id === "number" ? id : null;
+  }
+
+  function editDraft(row: unknown): { quantity: string; units: string } {
+    const rec = row as Record<string, unknown>;
+    const id = rowId(row);
+    if (id !== null && editValues[id]) return editValues[id];
+    return {
+      quantity: rec.quantity == null ? "" : String(rec.quantity),
+      units: rec.units == null ? "" : String(rec.units),
+    };
+  }
+
+  function isDirty(row: unknown): boolean {
+    const rec = row as Record<string, unknown>;
+    const draft = editDraft(row);
+    return (
+      draft.quantity !== (rec.quantity == null ? "" : String(rec.quantity)) ||
+      draft.units !== (rec.units == null ? "" : String(rec.units))
+    );
+  }
+
+  async function saveRow(row: unknown) {
+    const id = rowId(row);
+    if (id === null) return;
+    const draft = editDraft(row);
+    const quantity = draft.quantity.trim() === "" ? null : Number(draft.quantity);
+    if (quantity !== null && !Number.isFinite(quantity)) {
+      setError(`Invalid quantity for record #${id}`);
+      return;
+    }
+    setSavingId(id);
+    setError(null);
+    try {
+      await api.metricRecords.update(id, {
+        quantity,
+        units: draft.units.trim() === "" ? null : draft.units.trim(),
+      });
+      setEditValues((prev) => {
+        const next = { ...prev };
+        delete next[id];
+        return next;
+      });
+      await load();
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setSavingId(null);
+    }
+  }
+
+  async function deleteRow(row: unknown) {
+    const id = rowId(row);
+    if (id === null) return;
+    if (!window.confirm(`Delete metric record #${id}? This cannot be undone.`)) return;
+    setSavingId(id);
+    setError(null);
+    try {
+      await api.metricRecords.delete(id);
+      await load();
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setSavingId(null);
+    }
   }
 
   async function load() {
@@ -343,30 +416,97 @@ export function Explorer() {
                         </th>
                       );
                     })}
+                    {editable && (
+                      <th className="text-left py-2.5 px-3 font-semibold whitespace-nowrap">actions</th>
+                    )}
                   </tr>
                 </thead>
                 <tbody>
-                  {pageRows.map((row, i) => (
-                    <tr key={i} className="border-t border-zinc-800/50 hover:bg-zinc-800/20 transition-colors">
-                      {visibleKeys.map((k) => {
-                        const v = (row as Record<string, unknown>)[k];
-                        return (
-                          <td key={k} className="py-1.5 px-3 text-zinc-300 whitespace-nowrap max-w-[200px] truncate">
-                            {v == null
-                              ? <span className="text-zinc-700"> - </span>
-                              : typeof v === "number"
-                                ? <span className="tabular-nums">{fmt(v, 2)}</span>
-                                : typeof v === "boolean"
-                                  ? <span className={v ? "text-emerald-400" : "text-red-400"}>{String(v)}</span>
-                                  : <span title={String(v)}>{String(v).slice(0, 60)}</span>}
+                  {pageRows.map((row, i) => {
+                    const id = rowId(row);
+                    const canEdit = editable && id !== null;
+                    const draft = canEdit ? editDraft(row) : null;
+                    return (
+                      <tr key={i} className="border-t border-zinc-800/50 hover:bg-zinc-800/20 transition-colors">
+                        {visibleKeys.map((k) => {
+                          const v = (row as Record<string, unknown>)[k];
+                          if (canEdit && k === "quantity" && draft) {
+                            return (
+                              <td key={k} className="py-1.5 px-3 whitespace-nowrap">
+                                <input
+                                  type="number"
+                                  step="any"
+                                  value={draft.quantity}
+                                  disabled={savingId === id}
+                                  onChange={(e) =>
+                                    setEditValues((prev) => ({ ...prev, [id]: { ...draft, quantity: e.target.value } }))
+                                  }
+                                  className="w-28 bg-zinc-800 border border-zinc-700 rounded-lg px-2 py-1 text-xs text-zinc-200 tabular-nums disabled:opacity-50"
+                                />
+                              </td>
+                            );
+                          }
+                          if (canEdit && k === "units" && draft) {
+                            return (
+                              <td key={k} className="py-1.5 px-3 whitespace-nowrap">
+                                <input
+                                  type="text"
+                                  value={draft.units}
+                                  disabled={savingId === id}
+                                  onChange={(e) =>
+                                    setEditValues((prev) => ({ ...prev, [id]: { ...draft, units: e.target.value } }))
+                                  }
+                                  className="w-20 bg-zinc-800 border border-zinc-700 rounded-lg px-2 py-1 text-xs text-zinc-200 disabled:opacity-50"
+                                />
+                              </td>
+                            );
+                          }
+                          return (
+                            <td key={k} className="py-1.5 px-3 text-zinc-300 whitespace-nowrap max-w-[200px] truncate">
+                              {v == null
+                                ? <span className="text-zinc-700"> - </span>
+                                : typeof v === "number"
+                                  ? <span className="tabular-nums">{fmt(v, 2)}</span>
+                                  : typeof v === "boolean"
+                                    ? <span className={v ? "text-emerald-400" : "text-red-400"}>{String(v)}</span>
+                                    : <span title={String(v)}>{String(v).slice(0, 60)}</span>}
+                            </td>
+                          );
+                        })}
+                        {editable && (
+                          <td className="py-1.5 px-3 whitespace-nowrap">
+                            {canEdit ? (
+                              <div className="flex items-center gap-1.5">
+                                <button
+                                  onClick={() => saveRow(row)}
+                                  disabled={savingId === id || !isDirty(row)}
+                                  title="Save changes"
+                                  className="flex items-center gap-1 px-2 py-1 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 text-white rounded-lg text-[11px] font-semibold transition-colors"
+                                >
+                                  {savingId === id ? <RefreshCw size={11} className="animate-spin" /> : <Check size={11} />}
+                                  Save
+                                </button>
+                                <button
+                                  onClick={() => deleteRow(row)}
+                                  disabled={savingId === id}
+                                  title="Delete record"
+                                  className="flex items-center gap-1 px-2 py-1 bg-zinc-800 border border-zinc-700 hover:border-red-500/50 hover:text-red-400 disabled:opacity-40 text-zinc-400 rounded-lg text-[11px] font-semibold transition-colors"
+                                >
+                                  <Trash2 size={11} />
+                                  Delete
+                                </button>
+                              </div>
+                            ) : (
+                              <span className="text-zinc-700"> - </span>
+                            )}
                           </td>
-                        );
-                      })}
-                    </tr>
-                  ))}
+                        )}
+                      </tr>
+                    );
+                  })}
                   {pageRows.length === 0 && (
                     <tr>
-                      <td colSpan={visibleKeys.length} className="py-8 text-center text-zinc-600">
+                      <td colSpan={visibleKeys.length + (editable ? 1 : 0)} className="py-8 text-center text-zinc-600">
                         No rows match the filter.
                       </td>
                     </tr>

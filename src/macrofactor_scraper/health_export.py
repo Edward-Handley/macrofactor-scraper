@@ -176,6 +176,28 @@ class HealthAutoExportService:
         records = [_metric_from_row(row) for row in rows]
         return MetricRecordsResponse(metric_name=metric_name, count=len(records), records=records)
 
+    def update_health_record(self, record_id: int, fields: dict[str, Any]) -> MetricRecord | None:
+        self._ensure_schema()
+        allowed = {"quantity", "units", "record_date", "timestamp", "source", "metric_name"}
+        updates = {key: value for key, value in fields.items() if key in allowed}
+        with self._connect() as conn:
+            if updates:
+                assignments = ", ".join(f"{key} = ?" for key in updates)
+                conn.execute(
+                    f"UPDATE health_records SET {assignments} WHERE id = ?",
+                    [*updates.values(), record_id],
+                )
+            row = conn.execute("SELECT * FROM health_records WHERE id = ?", (record_id,)).fetchone()
+        if row is None:
+            return None
+        return _metric_from_row(row)
+
+    def delete_health_record(self, record_id: int) -> bool:
+        self._ensure_schema()
+        with self._connect() as conn:
+            cursor = conn.execute("DELETE FROM health_records WHERE id = ?", (record_id,))
+            return cursor.rowcount > 0
+
     def daily_summary(self, start: date | None = None, end: date | None = None) -> DailySummaryResponse:
         self._ensure_schema()
         _validate_range(start, end)

@@ -3,7 +3,7 @@ from __future__ import annotations
 import datetime as dt
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class HealthResponse(BaseModel):
@@ -76,6 +76,26 @@ class MetricRecordsResponse(BaseModel):
     metric_name: str
     count: int
     records: list[MetricRecord]
+
+
+class HealthRecordUpdate(BaseModel):
+    quantity: float | None = None
+    units: str | None = None
+    record_date: dt.date | None = None
+    timestamp: str | None = None
+    source: str | None = None
+    metric_name: str | None = None
+
+    @field_validator("timestamp")
+    @classmethod
+    def _timestamp_parseable(cls, value: str | None) -> str | None:
+        if value is None:
+            return value
+        try:
+            dt.datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError as exc:
+            raise ValueError("timestamp must be an ISO 8601 datetime string") from exc
+        return value
 
 
 class DailySummary(BaseModel):

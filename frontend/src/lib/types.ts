@@ -58,6 +58,26 @@ export interface MetricCatalogResponse {
   metrics: MetricCatalogItem[];
 }
 
+export interface MetricRecord {
+  id: number;
+  metric_name: string;
+  units: string | null;
+  date: string | null;
+  timestamp: string | null;
+  quantity: number | null;
+  source: string | null;
+  raw: Record<string, unknown>;
+}
+
+export interface MetricRecordUpdate {
+  quantity?: number | null;
+  units?: string | null;
+  record_date?: string | null;
+  timestamp?: string | null;
+  source?: string | null;
+  metric_name?: string | null;
+}
+
 export interface DiagnosticItem {
   metric_name: string;
   units: string | null;
