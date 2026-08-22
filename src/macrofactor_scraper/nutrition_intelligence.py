@@ -152,7 +152,7 @@ def _macros_from_food_log(raw: dict[str, Any]) -> dict[str, float | None]:
 
 
 async def fetch_nutrition_data(
-    read_service: MacroFactorReadService,
+    read_service: MacroFactorReadService | None,
     service: HealthAutoExportService,
     target_date: date,
 ) -> dict[str, float | None]:
@@ -172,18 +172,21 @@ async def fetch_nutrition_data(
                 "water_ml": water_ml,
             }
 
-    try:
-        record = await read_service.dated_document("food_log", target_date)
-    except Exception:
-        record = None
-    if record is not None:
-        return _macros_from_food_log(record.raw)
+    if read_service is not None:
+        try:
+            record = await read_service.dated_document("food_log", target_date)
+        except Exception:
+            record = None
+        if record is not None:
+            return _macros_from_food_log(record.raw)
 
     return {"calories": None, "protein_g": None, "carbs_g": None, "fat_g": None, "water_ml": None}
 
 
-async def fetch_macrofactor_recommendation(read_service: MacroFactorReadService) -> float | None:
+async def fetch_macrofactor_recommendation(read_service: MacroFactorReadService | None) -> float | None:
     """Pull MacroFactor's own daily calorie recommendation from the diet profile."""
+    if read_service is None:
+        return None
     record = None
     for dataset in ("diet_profile", "profile"):
         try:
@@ -416,7 +419,7 @@ def suggest_meals(deficits: dict[str, float], current_time: str | None = None) -
 async def compute_intelligence(
     service: HealthAutoExportService,
     settings: Settings,
-    read_service: MacroFactorReadService,
+    read_service: MacroFactorReadService | None,
     target_date: date,
 ) -> dict[str, Any]:
     """Main orchestrator — full intelligence report for one date."""

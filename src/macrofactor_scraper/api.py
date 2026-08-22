@@ -1852,15 +1852,17 @@ async def nutrition_intelligence(
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD")
 
-    if not settings.has_credentials:
-        raise HTTPException(status_code=503, detail="MacroFactor credentials not configured")
-
-    client = _firestore_client(settings)
-    try:
+    client: FirestoreClient | None = None
+    read_service: MacroFactorReadService | None = None
+    if settings.has_credentials:
+        client = _firestore_client(settings)
         read_service = MacroFactorReadService(settings, client)
+
+    try:
         result = await compute_intelligence(service, settings, read_service, target_date)
     finally:
-        await client.close()
+        if client is not None:
+            await client.close()
     return DailyNutritionIntelligenceResponse(**result)
 
 
@@ -1884,12 +1886,13 @@ async def nutrition_history(
     if (end_date - start_date).days > 62:
         raise HTTPException(status_code=400, detail="Range too large (max 62 days)")
 
-    if not settings.has_credentials:
-        raise HTTPException(status_code=503, detail="MacroFactor credentials not configured")
-
-    client = _firestore_client(settings)
-    try:
+    client: FirestoreClient | None = None
+    read_service: MacroFactorReadService | None = None
+    if settings.has_credentials:
+        client = _firestore_client(settings)
         read_service = MacroFactorReadService(settings, client)
+
+    try:
         results: list[DailyNutritionIntelligenceResponse] = []
         current = start_date
         while current <= end_date:
@@ -1897,7 +1900,8 @@ async def nutrition_history(
             results.append(DailyNutritionIntelligenceResponse(**result))
             current += timedelta(days=1)
     finally:
-        await client.close()
+        if client is not None:
+            await client.close()
     return results
 
 
