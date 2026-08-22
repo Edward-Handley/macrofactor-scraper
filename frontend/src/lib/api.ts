@@ -24,6 +24,7 @@ import type {
   MetricCatalogResponse,
   MetricRecord,
   MetricRecordUpdate,
+  NutritionIntelligence,
   PerformanceGoal,
   PerformanceGoalCreate,
   PerformanceGoalListResponse,
@@ -384,6 +385,13 @@ export const api = {
       request<PerformanceGoal>(`/v1/goals/${id}`, { method: "PUT", body: JSON.stringify(data) }),
     delete: (id: number) =>
       request<{ deleted: boolean }>(`/v1/goals/${id}`, { method: "DELETE" }),
+  },
+
+  nutrition: {
+    intelligence: (date: string) =>
+      request<NutritionIntelligence>(`/v1/nutrition/intelligence/${date}`),
+    history: (start: string, end: string) =>
+      request<NutritionIntelligence[]>(`/v1/nutrition/history?start=${start}&end=${end}`),
   },
 
   weeklyRecap: {

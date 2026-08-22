@@ -23,6 +23,7 @@ import { ActivityDetail } from "./pages/activity-detail";
 import { Swim } from "./pages/swim";
 import { Load } from "./pages/load";
 import { Goals } from "./pages/goals";
+import { Nutrition } from "./pages/nutrition";
 
 export const router = createBrowserRouter([
   {
@@ -52,6 +53,7 @@ export const router = createBrowserRouter([
       { path: "swim", element: <Swim /> },
       { path: "load", element: <Load /> },
       { path: "goals", element: <Goals /> },
+      { path: "nutrition", element: <Nutrition /> },
     ],
   },
 ]);

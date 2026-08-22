@@ -816,3 +816,65 @@ export interface FuelingSummaryResponse {
   protein: number | null;
   training_load: number;
 }
+
+// ─── Nutrition Intelligence ──────────────────────────────────────────────────
+
+export interface ScenarioTargets {
+  calories_low: number;
+  calories_high: number;
+  carbs_low: number;
+  carbs_high: number;
+  protein_low: number;
+  protein_high: number;
+  fat_low: number;
+  fat_high: number;
+}
+
+export interface ActualMacros {
+  calories: number | null;
+  protein_g: number | null;
+  carbs_g: number | null;
+  fat_g: number | null;
+  water_ml: number | null;
+}
+
+export interface NutritionAlert {
+  severity: "warning" | "info" | "good";
+  category: string;
+  title: string;
+  detail: string;
+  action: string | null;
+  metric: string;
+  actual: number;
+  target_low: number;
+  target_high: number;
+}
+
+export interface MealSuggestion {
+  title: string;
+  description: string;
+  protein_g: number;
+  carbs_g: number;
+  fat_g: number;
+  calories: number;
+  priority: "high" | "medium" | "low";
+}
+
+export interface MacroFactorVsGoals {
+  macrofactor_daily_calories: number | null;
+  athletic_low: number;
+  athletic_high: number;
+  gap: number | null;
+}
+
+export interface NutritionIntelligence {
+  date: string;
+  classification_intensity: string;
+  estimated_training_hours: number | null;
+  sports: string[];
+  actual_macros: ActualMacros;
+  target_macros: ScenarioTargets;
+  alerts: NutritionAlert[];
+  meal_suggestions: MealSuggestion[];
+  macrofactor_vs_goals: MacroFactorVsGoals;
+}

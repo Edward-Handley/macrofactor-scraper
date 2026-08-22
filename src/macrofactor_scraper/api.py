@@ -10,7 +10,7 @@ import time
 from collections import defaultdict, deque
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from datetime import date
+from datetime import date, timedelta
 from hashlib import sha256
 from pathlib import Path
 from urllib.parse import parse_qs
@@ -21,6 +21,9 @@ from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, Stre
 from fastapi.staticfiles import StaticFiles
 
 from macrofactor_scraper.config import Settings, get_settings
+from macrofactor_scraper.auth import FirebaseAuthClient
+from macrofactor_scraper.firestore import FirestoreClient
+from macrofactor_scraper.service import MacroFactorReadService
 from macrofactor_scraper.health_export import HealthAutoExportService
 from macrofactor_scraper.models import (
     Activity,
@@ -45,6 +48,7 @@ from macrofactor_scraper.models import (
     DailyLogUpsert,
     DailyRecommendationResponse,
     DailySummaryResponse,
+    DailyNutritionIntelligenceResponse,
     DashboardMetricCatalogResponse,
     DashboardPreferences,
     DashboardSummaryResponse,
@@ -1828,6 +1832,73 @@ async def generate_performance_review_endpoint(
         ),
     )
     return PerformanceReviewResponse(**result)
+
+
+def _firestore_client(settings: Settings) -> FirestoreClient:
+    return FirestoreClient(settings, FirebaseAuthClient(settings))
+
+
+@app.get("/v1/nutrition/intelligence/{date_str}", response_model=DailyNutritionIntelligenceResponse, dependencies=[Depends(require_private_access)])
+async def nutrition_intelligence(
+    date_str: str,
+    service: HealthAutoExportService = Depends(get_health_export_service),
+    settings: Settings = Depends(get_settings),
+) -> DailyNutritionIntelligenceResponse:
+    """Compute nutrition intelligence for a specific date."""
+    from macrofactor_scraper.nutrition_intelligence import compute_intelligence
+
+    try:
+        target_date = date.fromisoformat(date_str)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD")
+
+    if not settings.has_credentials:
+        raise HTTPException(status_code=503, detail="MacroFactor credentials not configured")
+
+    client = _firestore_client(settings)
+    try:
+        read_service = MacroFactorReadService(settings, client)
+        result = await compute_intelligence(service, settings, read_service, target_date)
+    finally:
+        await client.close()
+    return DailyNutritionIntelligenceResponse(**result)
+
+
+@app.get("/v1/nutrition/history", response_model=list[DailyNutritionIntelligenceResponse], dependencies=[Depends(require_private_access)])
+async def nutrition_history(
+    start: str,
+    end: str,
+    service: HealthAutoExportService = Depends(get_health_export_service),
+    settings: Settings = Depends(get_settings),
+) -> list[DailyNutritionIntelligenceResponse]:
+    """Nutrition intelligence for a date range (for charting)."""
+    from macrofactor_scraper.nutrition_intelligence import compute_intelligence
+
+    try:
+        start_date = date.fromisoformat(start)
+        end_date = date.fromisoformat(end)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD")
+    if end_date < start_date:
+        raise HTTPException(status_code=400, detail="end must be on or after start")
+    if (end_date - start_date).days > 62:
+        raise HTTPException(status_code=400, detail="Range too large (max 62 days)")
+
+    if not settings.has_credentials:
+        raise HTTPException(status_code=503, detail="MacroFactor credentials not configured")
+
+    client = _firestore_client(settings)
+    try:
+        read_service = MacroFactorReadService(settings, client)
+        results: list[DailyNutritionIntelligenceResponse] = []
+        current = start_date
+        while current <= end_date:
+            result = await compute_intelligence(service, settings, read_service, current)
+            results.append(DailyNutritionIntelligenceResponse(**result))
+            current += timedelta(days=1)
+    finally:
+        await client.close()
+    return results
 
 
 @app.get("/{full_path:path}")

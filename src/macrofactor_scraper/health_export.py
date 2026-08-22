@@ -1623,6 +1623,13 @@ class HealthAutoExportService:
                     tokens_used INTEGER NOT NULL DEFAULT 0,
                     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
                 );
+
+                CREATE TABLE IF NOT EXISTS nutrition_preferences (
+                    id INTEGER PRIMARY KEY CHECK (id = 1),
+                    athlete_weight_kg REAL DEFAULT 91.0,
+                    hydration_goal_ml INT DEFAULT 3000,
+                    updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+                );
                 """
             )
             # Migrations for existing DBs

@@ -3,7 +3,7 @@ import {
   Activity, BarChart2, BotMessageSquare, Camera, Database, Dumbbell,
   HeartPulse, Lightbulb, Moon, Ruler, Search, Settings, Sun, Scissors,
   CalendarCheck, Trophy, ScrollText, Waves, TrendingUp, Target, Gauge,
-  Zap,
+  Zap, Flame,
 } from "lucide-react";
 import { cn } from "../../lib/utils";
 import { useAppMode } from "../../hooks/use-app-mode";
@@ -135,6 +135,7 @@ export function SidebarNav() {
         <PerfNavItem to="/swim" label="Swim" Icon={Waves} />
         <PerfNavItem to="/load" label="Load" Icon={TrendingUp} />
         <PerfNavItem to="/goals" label="Goals" Icon={Target} />
+        <PerfNavItem to="/nutrition" label="Nutrition" Icon={Flame} />
         <PerfNavItem to="/coach" label="Coach" Icon={BotMessageSquare} />
         <PerfNavItem to="/health" label="Health" Icon={HeartPulse} />
         <PerfNavItem to="/trends" label="Trends" Icon={BarChart2} />
@@ -156,6 +157,7 @@ export function SidebarNav() {
       <NavItem to="/recaps" label="Recaps" Icon={ScrollText} />
       <NavItem to="/cut-phases" label="Cut" Icon={Scissors} />
       <NavItem to="/measurements" label="Measures" Icon={Ruler} />
+      <NavItem to="/nutrition" label="Nutrition" Icon={Flame} />
       <NavItem to="/health" label="Health" Icon={HeartPulse} />
       <NavItem to="/trends" label="Trends" Icon={BarChart2} />
       <NavItem to="/workouts" label="Workouts" Icon={Dumbbell} />
@@ -176,6 +178,7 @@ export function BottomNav() {
         <PerfNavItem to="/activities" label="Activities" Icon={Activity} />
         <PerfNavItem to="/swim" label="Swim" Icon={Waves} />
         <PerfNavItem to="/load" label="Load" Icon={TrendingUp} />
+        <PerfNavItem to="/nutrition" label="Fuel" Icon={Flame} />
         <PerfNavItem to="/coach" label="Coach" Icon={BotMessageSquare} />
       </nav>
     );

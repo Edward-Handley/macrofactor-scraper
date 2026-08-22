@@ -1095,3 +1095,63 @@ def _row_to_goal(row: dict) -> "PerformanceGoal":
         notes=row.get("notes"),
         created_at=row.get("created_at"),
     )
+
+
+class ScenarioTargets(BaseModel):
+    calories_low: float
+    calories_high: float
+    carbs_low: float
+    carbs_high: float
+    protein_low: float
+    protein_high: float
+    fat_low: float
+    fat_high: float
+
+
+class ActualMacros(BaseModel):
+    calories: float | None = None
+    protein_g: float | None = None
+    carbs_g: float | None = None
+    fat_g: float | None = None
+    water_ml: float | None = None
+
+
+class NutritionAlert(BaseModel):
+    severity: str  # "warning" | "info" | "good"
+    category: str  # "protein" | "carbs" | "calories" | "meal_timing" | "hydration"
+    title: str
+    detail: str
+    action: str | None = None
+    metric: str
+    actual: float
+    target_low: float
+    target_high: float
+
+
+class MealSuggestion(BaseModel):
+    title: str
+    description: str
+    protein_g: float
+    carbs_g: float
+    fat_g: float
+    calories: float
+    priority: str  # "high" | "medium" | "low"
+
+
+class MacroFactorVsGoals(BaseModel):
+    macrofactor_daily_calories: float | None = None
+    athletic_low: float
+    athletic_high: float
+    gap: float | None = None
+
+
+class DailyNutritionIntelligenceResponse(BaseModel):
+    date: str
+    classification_intensity: str
+    estimated_training_hours: float | None = None
+    sports: list[str] = []
+    actual_macros: ActualMacros
+    target_macros: ScenarioTargets
+    alerts: list[NutritionAlert] = []
+    meal_suggestions: list[MealSuggestion] = []
+    macrofactor_vs_goals: MacroFactorVsGoals
